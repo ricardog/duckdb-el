@@ -174,5 +174,52 @@
   ;; Test with path
   (duckdb-query-and-display ":memory:" "SELECT 1 as val;"))
 
+(ert-deftest duckdb-browse-get-tables-with-counts-test ()
+  "Test duckdb--get-tables-with-counts."
+  (with-duckdb conn ":memory:"
+    (duckdb-execute conn "CREATE TABLE t1 (id int)")
+    (duckdb-execute conn "INSERT INTO t1 VALUES (1), (2), (3)")
+    (duckdb-execute conn "CREATE TABLE t2 (name varchar)")
+    (duckdb-execute conn "INSERT INTO t2 VALUES ('a')")
+    
+    (let ((tables (duckdb--get-tables-with-counts conn)))
+      (should (equal (length tables) 2))
+      (should (member '("t1" 3) tables))
+      (should (member '("t2" 1) tables)))))
+
+(ert-deftest duckdb-browse-get-table-preview-test ()
+  "Test duckdb--get-table-preview."
+  (with-duckdb conn ":memory:"
+    (duckdb-execute conn "CREATE TABLE t1 (id int, val varchar)")
+    (duckdb-execute conn "INSERT INTO t1 VALUES (1, 'apple'), (2, 'banana')")
+    
+    (let ((preview (duckdb--get-table-preview conn "t1")))
+      (should (string-match "id" preview))
+      (should (string-match "val" preview))
+      (should (string-match "1" preview))
+      (should (string-match "apple" preview))
+      (should (string-match "2" preview))
+      (should (string-match "banana" preview)))))
+
+(ert-deftest duckdb-browse-format-preview-data-test ()
+  "Test duckdb--format-preview-data."
+  (let* ((columns '("id" "name"))
+         (rows '((1 "Alice") (2 "Bob")))
+         (formatted (duckdb--format-preview-data columns rows)))
+    (should (string-match "id  name" formatted))
+    (should (string-match "1   Alice" formatted))
+    (should (string-match "2   Bob" formatted))))
+
+(ert-deftest duckdb-mode-open-file-test ()
+  "Test duckdb-mode-open-file."
+  (let ((buf (duckdb-mode-open-file ":memory:")))
+    (unwind-protect
+        (with-current-buffer buf
+          (should (eq major-mode 'duckdb-browse-mode))
+          (should (local-variable-p 'duckdb-current-connection))
+          (should (local-variable-p 'duckdb--db-ptr))
+          (should (string-match "Table Name" (buffer-string))))
+      (kill-buffer buf))))
+
 (provide 'duckdb-tests)
 ;;; duckdb-tests.el ends here
