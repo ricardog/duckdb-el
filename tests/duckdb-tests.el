@@ -13,5 +13,26 @@
   (should-error (duckdb-open "/nonexistent/path/to/db")
                 :type 'duckdb-error))
 
+(ert-deftest duckdb-connect-test ()
+  "Test connecting to a database."
+  (let* ((db (duckdb-open ":memory:"))
+         (conn (duckdb-connect db)))
+    (should (user-ptrp conn))
+    (duckdb-disconnect conn)))
+
+(ert-deftest duckdb-execute-test ()
+  "Test executing a simple SQL query."
+  (with-duckdb conn ":memory:"
+    (let ((rows (duckdb-execute conn "CREATE TABLE test (id INTEGER, name VARCHAR);")))
+      (should (equal rows 0)))
+    (let ((rows (duckdb-execute conn "INSERT INTO test VALUES (1, 'Alice'), (2, 'Bob');")))
+      (should (equal rows 2)))))
+
+(ert-deftest duckdb-execute-error ()
+  "Test executing an invalid SQL query should signal duckdb-error."
+  (with-duckdb conn ":memory:"
+    (should-error (duckdb-execute conn "SELECT * FROM non_existent_table;")
+                  :type 'duckdb-error)))
+
 (provide 'duckdb-tests)
 ;;; duckdb-tests.el ends here
