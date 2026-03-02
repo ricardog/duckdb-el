@@ -129,5 +129,35 @@
                                          (lambda (_) (setq done t)))
                     :type 'duckdb-error))))
 
+(ert-deftest duckdb-get-tables-columns-test ()
+  "Test duckdb-get-tables and duckdb-get-columns."
+  (with-duckdb conn ":memory:"
+    (duckdb-execute conn "CREATE TABLE users (id INTEGER, name VARCHAR);")
+    (duckdb-execute conn "CREATE TABLE orders (id INTEGER, user_id INTEGER, total DOUBLE);")
+    (let ((tables (duckdb-get-tables conn)))
+      (should (member "users" tables))
+      (should (member "orders" tables)))
+    (let ((columns (duckdb-get-columns conn "users")))
+      (should (member "id" columns))
+      (should (member "name" columns)))))
+
+(ert-deftest duckdb-insert-buffer-test ()
+  "Test duckdb-insert-buffer."
+  (with-duckdb conn ":memory:"
+    (duckdb-execute conn "CREATE TABLE users (id INTEGER, name VARCHAR);")
+    (with-temp-buffer
+      (insert "1,Alice\n2,Bob\n3,Charlie\n")
+      (duckdb-insert-buffer conn "users"))
+    (let ((results (duckdb-select conn "SELECT * FROM users ORDER BY id;")))
+      (should (equal results '((1 "Alice") (2 "Bob") (3 "Charlie")))))))
+
+(ert-deftest duckdb-query-and-display-test ()
+  "Test duckdb-query-and-display."
+  (with-duckdb conn ":memory:"
+    (duckdb-execute conn "CREATE TABLE test (id INTEGER, name VARCHAR);")
+    (duckdb-execute conn "INSERT INTO test VALUES (1, 'Alice'), (2, 'Bob');")
+    ;; This test just ensures it doesn't crash, as it involves buffer/window management.
+    (duckdb-query-and-display conn "SELECT * FROM test ORDER BY id;")))
+
 (provide 'duckdb-tests)
 ;;; duckdb-tests.el ends here
