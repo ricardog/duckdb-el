@@ -1,0 +1,5 @@
+*.o
+*.so
+lib/libduckdb.so
+lib/libduckdb_static.a
+lib/libduckdb.zip
