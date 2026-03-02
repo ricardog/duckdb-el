@@ -28,6 +28,23 @@
     (let ((rows (duckdb-execute conn "INSERT INTO test VALUES (1, 'Alice'), (2, 'Bob');")))
       (should (equal rows 2)))))
 
+(ert-deftest duckdb-select-test ()
+  "Test selecting data from a table."
+  (with-duckdb conn ":memory:"
+    (duckdb-execute conn "CREATE TABLE test (id INTEGER, name VARCHAR, price DOUBLE, active BOOLEAN);")
+    (duckdb-execute conn "INSERT INTO test VALUES (1, 'Alice', 10.5, true), (2, 'Bob', 20.0, false), (3, NULL, NULL, NULL);")
+    (let ((results (duckdb-select conn "SELECT * FROM test ORDER BY id;")))
+      (should (equal results '((1 "Alice" 10.5 t)
+                               (2 "Bob" 20.0 nil)
+                               (3 nil nil nil)))))))
+
+(ert-deftest duckdb-null-symbol-custom-test ()
+  "Test that duckdb-null-symbol can be customized."
+  (let ((duckdb-null-symbol :null))
+    (with-duckdb conn ":memory:"
+      (let ((results (duckdb-select conn "SELECT NULL;")))
+        (should (equal results '((:null))))))))
+
 (ert-deftest duckdb-execute-error ()
   "Test executing an invalid SQL query should signal duckdb-error."
   (with-duckdb conn ":memory:"
