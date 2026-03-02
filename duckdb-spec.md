@@ -93,10 +93,38 @@ To ensure memory safety, the module uses Emacs `user_ptr` objects with finalizer
        (duckdb-disconnect ,var))))
 ```
 
-### 5.2 UI Integration
-* `duckdb-show-table`: A command to pop up a tabulated-list-mode or vtable buffer containing query results.
+### 5.2 Interactive results (The "SQL-Scrubber")
 
-* `duckdb-completion-at-point`: A function for sql-mode to provide schema-aware autocompletion.
+The most common interactive use case is running a query and exploring the data.
+
+* **Feature:** `duckdb-edit-mode`. A major mode (similar to `list-packages` or `tabulated-list-mode`) that renders query results into a buffer.
+* **Implementation:** **Pure Elisp.** * The C module provides `duckdb-select` as a list of lists.
+* The Elisp code formats these into a `tabulated-list-entries` structure.
+* Support a read-only mode where the contents of the table can't be updated.
+* *Bonus:* Use `vtable.el` (introduced in Emacs 29) to handle variable-width columns and alignment automatically.
+
+
+### 5.3 "Insert from Buffer" (The Data Ingestor)
+
+DuckDB is famous for its ability to "query anything." Users should be able to point at a CSV or JSON buffer and "suck" it into a table.
+
+* **Feature:** `duckdb-insert-buffer`.
+* **Implementation:** **Hybrid.**
+* **Elisp:** Identify the file path of the current buffer or write the buffer to a temp file.
+* **Module Primitives:** We need a robust `duckdb-execute` that can handle DuckDB's `COPY ... FROM ...` commands. If the data is only in a string (not a file), we would need a C primitive to stream Elisp string chunks into the DuckDB Appender API for performance.
+
+### 5.4 Smart Completion (The "Capf")
+
+* **Feature:** `completion-at-point` for table names and column names.
+* **Implementation:** **Hybrid.**
+* **Module Primitive:** We need a way to introspect the schema quickly.
+```elisp
+(duckdb-get-tables connection) ;; Returns ("users" "orders")
+(duckdb-get-columns connection "users") ;; Returns ("id" "name" "email")
+
+```
+
+* **Elisp:** A `completion-at-point-function` that calls these primitives when the user is typing inside a `duckdb-sql-mode` buffer.
 
 ---
 
