@@ -69,6 +69,17 @@ Optional PARAMS are bound to the query."
 (defvar-local duckdb-current-connection nil
   "The current DuckDB connection for this buffer.")
 
+(defvar duckdb-path-history nil
+  "History of DuckDB database paths.")
+
+(defun duckdb-set-connection (path)
+  "Set the current DuckDB connection for the buffer to PATH."
+  (interactive (list (read-string "DuckDB Path: " ":memory:" 'duckdb-path-history ":memory:")))
+  (let* ((db (duckdb-open path))
+         (conn (duckdb-connect db)))
+    (setq-local duckdb-current-connection conn)
+    (message "Buffer connected to %s" path)))
+
 (defmacro with-duckdb (var path &rest body)
   "Open DuckDB at PATH, bind connection to VAR, and execute BODY."
   (declare (indent 2))
@@ -79,6 +90,11 @@ Optional PARAMS are bound to the query."
            (progn ,@body)
          (duckdb-disconnect ,var)
          (duckdb-close ,db-sym)))))
+
+(defun duckdb--get-db-or-path ()
+  "Get the current connection or prompt for a path."
+  (or duckdb-current-connection
+      (read-string "DuckDB Path: " ":memory:" 'duckdb-path-history ":memory:")))
 
 (defun duckdb-get-tables (conn-ptr)
   "Return a list of all table names in the current database for CONN-PTR."
@@ -137,11 +153,8 @@ Optional PARAMS are bound to the query."
           (tabulated-list-print t))))
     (display-buffer buf)))
 
-(defun duckdb-query-and-display (conn-ptr sql &optional params)
-  "Execute SQL on CONN-PTR and display results."
-  (interactive (list duckdb-current-connection (read-string "SQL: ")))
-  (unless conn-ptr
-    (error "No active DuckDB connection"))
+(defun duckdb--query-and-display-internal (conn-ptr sql &optional params)
+  "Internal helper for query and display."
   (let* ((results (duckdb-select-columns conn-ptr sql params))
          (keys (cl-loop for (k v) on results by 'cddr collect k))
          (columns (mapcar (lambda (k) (substring (symbol-name k) 1)) keys))
@@ -151,24 +164,36 @@ Optional PARAMS are bound to the query."
                         collect (mapcar (lambda (col-vec) (aref col-vec r)) data))))
     (duckdb--render-results columns rows)))
 
+(defun duckdb-query-and-display (db-or-path sql &optional params)
+  "Execute SQL on DB-OR-PATH and display results.
+DB-OR-PATH can be a connection pointer or a string path."
+  (interactive (list (duckdb--get-db-or-path) (read-string "SQL: ")))
+  (if (stringp db-or-path)
+      (with-duckdb conn db-or-path
+        (duckdb--query-and-display-internal conn sql params))
+    (duckdb--query-and-display-internal db-or-path sql params)))
+
 ;; Data Ingestor
-(defun duckdb-insert-buffer (conn-ptr table-name &optional buffer)
-  "Insert the contents of BUFFER into TABLE-NAME in DuckDB via CONN-PTR.
+(defun duckdb-insert-buffer (db-or-path table-name &optional buffer)
+  "Insert the contents of BUFFER into TABLE-NAME in DuckDB via DB-OR-PATH.
+DB-OR-PATH can be a connection pointer or a string path.
 If BUFFER is nil, use the current buffer."
-  (interactive (list duckdb-current-connection (read-string "Table name: ")))
-  (unless conn-ptr
-    (error "No active DuckDB connection"))
+  (interactive (list (duckdb--get-db-or-path) (read-string "Table name: ")))
   (let* ((buf (or buffer (current-buffer)))
          (file (buffer-file-name buf)))
-    (if file
-        (duckdb-execute conn-ptr (format "COPY %s FROM '%s' (AUTO_DETECT TRUE)" table-name file))
-      ;; If not a file, write to a temp file
-      (let ((temp-file (make-temp-file "duckdb-insert-")))
-        (with-current-buffer buf
-          (write-region (point-min) (point-max) temp-file))
-        (unwind-protect
-            (duckdb-execute conn-ptr (format "COPY %s FROM '%s' (AUTO_DETECT TRUE)" table-name temp-file))
-          (delete-file temp-file))))))
+    (cl-flet ((do-insert (conn)
+                (if file
+                    (duckdb-execute conn (format "COPY %s FROM '%s' (AUTO_DETECT TRUE)" table-name file))
+                  ;; If not a file, write to a temp file
+                  (let ((temp-file (make-temp-file "duckdb-insert-")))
+                    (with-current-buffer buf
+                      (write-region (point-min) (point-max) temp-file))
+                    (unwind-protect
+                        (duckdb-execute conn (format "COPY %s FROM '%s' (AUTO_DETECT TRUE)" table-name temp-file))
+                      (delete-file temp-file))))))
+      (if (stringp db-or-path)
+          (with-duckdb conn db-or-path (do-insert conn))
+        (do-insert db-or-path)))))
 
 (provide 'duckdb)
 ;;; duckdb.el ends here

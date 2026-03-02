@@ -142,22 +142,37 @@
       (should (member "name" columns)))))
 
 (ert-deftest duckdb-insert-buffer-test ()
-  "Test duckdb-insert-buffer."
+  "Test duckdb-insert-buffer with connection and path."
   (with-duckdb conn ":memory:"
     (duckdb-execute conn "CREATE TABLE users (id INTEGER, name VARCHAR);")
     (with-temp-buffer
       (insert "1,Alice\n2,Bob\n3,Charlie\n")
       (duckdb-insert-buffer conn "users"))
     (let ((results (duckdb-select conn "SELECT * FROM users ORDER BY id;")))
-      (should (equal results '((1 "Alice") (2 "Bob") (3 "Charlie")))))))
+      (should (equal results '((1 "Alice") (2 "Bob") (3 "Charlie"))))))
+  ;; Test with path
+  (let ((tmp-db (make-temp-file "duckdb-test-")))
+    (delete-file tmp-db) ;; DuckDB fails to open an empty file as a DB
+    (unwind-protect
+        (progn
+          (with-duckdb conn tmp-db
+            (duckdb-execute conn "CREATE TABLE users (id INTEGER, name VARCHAR);"))
+          (with-temp-buffer
+            (insert "4,David\n")
+            (duckdb-insert-buffer tmp-db "users"))
+          (with-duckdb conn tmp-db
+            (let ((results (duckdb-select conn "SELECT * FROM users;")))
+              (should (equal results '((4 "David")))))))
+      (when (file-exists-p tmp-db) (delete-file tmp-db)))))
 
 (ert-deftest duckdb-query-and-display-test ()
-  "Test duckdb-query-and-display."
+  "Test duckdb-query-and-display with connection and path."
   (with-duckdb conn ":memory:"
     (duckdb-execute conn "CREATE TABLE test (id INTEGER, name VARCHAR);")
     (duckdb-execute conn "INSERT INTO test VALUES (1, 'Alice'), (2, 'Bob');")
-    ;; This test just ensures it doesn't crash, as it involves buffer/window management.
-    (duckdb-query-and-display conn "SELECT * FROM test ORDER BY id;")))
+    (duckdb-query-and-display conn "SELECT * FROM test ORDER BY id;"))
+  ;; Test with path
+  (duckdb-query-and-display ":memory:" "SELECT 1 as val;"))
 
 (provide 'duckdb-tests)
 ;;; duckdb-tests.el ends here
