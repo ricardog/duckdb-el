@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <signal.h>
 #include "duckdb-api.h"
 
 int plugin_is_GPL_compatible;
@@ -79,7 +80,6 @@ typedef struct {
   duckdb_result result;
   duckdb_state state;
   char *error_msg;
-  int pipe_fd[2];
   emacs_value callback_ref;
   bool is_done;
 } async_ctx;
@@ -95,10 +95,7 @@ async_worker(void *data)
   }
   ctx->is_done = true;
   /* Signal the main thread */
-  char dummy = 'X';
-  if (write(ctx->pipe_fd[1], &dummy, 1) != 1) {
-    /* Silent failure? */
-  }
+  kill(getpid(), SIGUSR1);
   return NULL;
 }
 
@@ -116,8 +113,6 @@ async_ctx_finalizer(void *data)
     if (ctx->error_msg) {
         free(ctx->error_msg);
     }
-    if (ctx->pipe_fd[0] != -1) close(ctx->pipe_fd[0]);
-    if (ctx->pipe_fd[1] != -1) close(ctx->pipe_fd[1]);
     free(ctx);
   }
 }
@@ -881,20 +876,10 @@ Fduckdb_select_async(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *
   ctx->error_msg = NULL;
   ctx->is_done = false;
   
-  if (pipe(ctx->pipe_fd) == -1) {
-    env->free_global_ref(env, ctx->callback_ref);
-    duckdb_destroy_prepare(&stmt);
-    free(ctx);
-    SIGNAL_ERROR(env, "error", "Failed to create pipe");
-    return env->intern(env, "nil");
-  }
-
   pthread_t thread;
   if (pthread_create(&thread, NULL, async_worker, ctx) != 0) {
     env->free_global_ref(env, ctx->callback_ref);
     duckdb_destroy_prepare(&stmt);
-    close(ctx->pipe_fd[0]);
-    close(ctx->pipe_fd[1]);
     free(ctx);
     SIGNAL_ERROR(env, "error", "Failed to create thread");
     return env->intern(env, "nil");
@@ -917,12 +902,6 @@ Fduckdb_async_poll(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *da
 
   async_ctx *ctx = (async_ctx *)env->get_user_ptr(env, args[0]);
   if (!ctx->is_done) return env->intern(env, "nil");
-
-  /* Read from pipe to clear it */
-  char buf[1];
-  if (read(ctx->pipe_fd[0], buf, 1) != 1) {
-      /* Already read or error */
-  }
 
   if (ctx->state == DuckDBError) {
       emacs_value error_sym = env->intern(env, "duckdb-error");

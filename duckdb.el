@@ -32,9 +32,6 @@
 (defvar duckdb--async-queries nil
   "List of active asynchronous query contexts.")
 
-(defvar duckdb--async-timer nil
-  "Timer for polling asynchronous queries.")
-
 (defun duckdb--async-poll-all ()
   "Poll all active asynchronous queries."
   (let ((completed nil))
@@ -49,10 +46,15 @@
          (message "Error during DuckDB async poll: %S" err)
          (push ctx completed))))
     (dolist (ctx completed)
-      (setq duckdb--async-queries (delq ctx duckdb--async-queries)))
-    (when (and (null duckdb--async-queries) duckdb--async-timer)
-      (cancel-timer duckdb--async-timer)
-      (setq duckdb--async-timer nil))))
+      (setq duckdb--async-queries (delq ctx duckdb--async-queries)))))
+
+(defun duckdb--handle-sigusr1 ()
+  "Handle SIGUSR1 signal for async query completion."
+  (interactive)
+  (duckdb--async-poll-all))
+
+;; Bind SIGUSR1 to our handler
+(define-key special-event-map [sigusr1] #'duckdb--handle-sigusr1)
 
 (defun duckdb-select-async (conn-ptr sql callback &optional params)
   "Execute SQL query asynchronously on CONN-PTR and call CALLBACK with results.
@@ -60,8 +62,6 @@ Optional PARAMS are bound to the query."
   (let ((ctx (duckdb--select-async conn-ptr sql callback params)))
     (when ctx
       (push ctx duckdb--async-queries)
-      (unless duckdb--async-timer
-        (setq duckdb--async-timer (run-at-time 0.05 0.05 #'duckdb--async-poll-all)))
       ctx)))
 
 (defmacro with-duckdb (var path &rest body)

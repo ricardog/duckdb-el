@@ -112,7 +112,7 @@
                              (setq done t)))
       (let ((timeout 50)) ; 5 seconds total
         (while (and (not done) (> timeout 0))
-          (sleep-for 0.1)
+          (read-event nil nil 0.1)
           (setq timeout (1- timeout))))
       (should done)
       (should (equal results '((1 "Alice") (2 "Bob")))))))
