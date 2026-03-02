@@ -1,6 +1,6 @@
 CC      = gcc
-CFLAGS  = -Wall -Wextra -O2 -fPIC -I. -I./lib
-LDFLAGS = -L./lib -lduckdb -Wl,-rpath,'$$ORIGIN/lib'
+CFLAGS  = -Wall -Wextra -O2 -fPIC -pthread -I. -I./lib
+LDFLAGS = -pthread -L./lib -lduckdb -Wl,-rpath,'$$ORIGIN/lib'
 
 EMACS   = emacs
 RM      = rm -f

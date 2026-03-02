@@ -99,5 +99,35 @@
       (should (equal (duckdb-step stmt) '(3 "Charlie")))
       (should (equal (duckdb-step stmt) nil)))))
 
+(ert-deftest duckdb-select-async-test ()
+  "Test selecting data asynchronously."
+  (with-duckdb conn ":memory:"
+    (duckdb-execute conn "CREATE TABLE test (id INTEGER, name VARCHAR);")
+    (duckdb-execute conn "INSERT INTO test VALUES (1, 'Alice'), (2, 'Bob');")
+    (let ((done nil)
+          (results nil))
+      (duckdb-select-async conn "SELECT * FROM test ORDER BY id;"
+                           (lambda (res)
+                             (setq results res)
+                             (setq done t)))
+      (let ((timeout 50)) ; 5 seconds total
+        (while (and (not done) (> timeout 0))
+          (sleep-for 0.1)
+          (setq timeout (1- timeout))))
+      (should done)
+      (should (equal results '((1 "Alice") (2 "Bob")))))))
+
+(ert-deftest duckdb-select-async-error-test ()
+  "Test selecting data asynchronously with error."
+  (with-duckdb conn ":memory:"
+    (let ((done nil)
+          (error-caught nil))
+      ;; Note: In my implementation, invalid SQL is caught during PREPARE in main thread.
+      ;; But let's test a runtime error if possible.
+      ;; Actually, I'll test catch-all.
+      (should-error (duckdb-select-async conn "SELECT * FROM non_existent_table;"
+                                         (lambda (_) (setq done t)))
+                    :type 'duckdb-error))))
+
 (provide 'duckdb-tests)
 ;;; duckdb-tests.el ends here

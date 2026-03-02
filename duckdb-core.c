@@ -1,6 +1,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <pthread.h>
+#include <unistd.h>
 #include "duckdb-api.h"
 
 int plugin_is_GPL_compatible;
@@ -68,6 +70,55 @@ stmt_finalizer(void *data)
     if (stmt_ptr->stmt)
       duckdb_destroy_prepare(&stmt_ptr->stmt);
     free(stmt_ptr);
+  }
+}
+
+/* Asynchronous Query Context */
+typedef struct {
+  duckdb_prepared_statement stmt;
+  duckdb_result result;
+  duckdb_state state;
+  char *error_msg;
+  int pipe_fd[2];
+  emacs_value callback_ref;
+  bool is_done;
+} async_ctx;
+
+static void *
+async_worker(void *data)
+{
+  async_ctx *ctx = (async_ctx *)data;
+  ctx->state = duckdb_execute_prepared(ctx->stmt, &ctx->result);
+  if (ctx->state == DuckDBError) {
+    const char *err = duckdb_result_error(&ctx->result);
+    if (err) ctx->error_msg = strdup(err);
+  }
+  ctx->is_done = true;
+  /* Signal the main thread */
+  char dummy = 'X';
+  if (write(ctx->pipe_fd[1], &dummy, 1) != 1) {
+    /* Silent failure? */
+  }
+  return NULL;
+}
+
+static void
+async_ctx_finalizer(void *data)
+{
+  async_ctx *ctx = (async_ctx *)data;
+  if (ctx) {
+    if (ctx->is_done) {
+        duckdb_destroy_result(&ctx->result);
+    }
+    if (ctx->stmt) {
+        duckdb_destroy_prepare(&ctx->stmt);
+    }
+    if (ctx->error_msg) {
+        free(ctx->error_msg);
+    }
+    if (ctx->pipe_fd[0] != -1) close(ctx->pipe_fd[0]);
+    if (ctx->pipe_fd[1] != -1) close(ctx->pipe_fd[1]);
+    free(ctx);
   }
 }
 
@@ -778,6 +829,134 @@ Fduckdb_step(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
   return row_list;
 }
 
+static emacs_value
+Fduckdb_select_async(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+{
+  (void)data;
+
+  if (!env->eq(env, env->type_of(env, args[0]), env->intern(env, "user-ptr")))
+  {
+    SIGNAL_ERROR(env, "wrong-type-argument", "Expected user-ptr for duckdb-conn-ptr");
+    return env->intern(env, "nil");
+  }
+
+  duckdb_connection *conn_ptr = (duckdb_connection *)env->get_user_ptr(env, args[0]);
+  if (!conn_ptr || !*conn_ptr)
+  {
+    SIGNAL_ERROR(env, "duckdb-error", "Invalid connection pointer");
+    return env->intern(env, "nil");
+  }
+
+  char *sql = extract_string(env, args[1]);
+  if (!sql)
+  {
+    SIGNAL_ERROR(env, "error", "Invalid SQL argument");
+    return env->intern(env, "nil");
+  }
+
+  emacs_value callback = args[2];
+  emacs_value params = (nargs > 3) ? args[3] : env->intern(env, "nil");
+
+  duckdb_prepared_statement stmt;
+  if (duckdb_prepare(*conn_ptr, sql, &stmt) == DuckDBError)
+  {
+    const char *error_msg = duckdb_prepare_error(stmt);
+    SIGNAL_ERROR(env, "duckdb-error", error_msg ? error_msg : "Failed to prepare statement");
+    duckdb_destroy_prepare(&stmt);
+    free(sql);
+    return env->intern(env, "nil");
+  }
+  free(sql);
+
+  if (!bind_parameters(env, stmt, params))
+  {
+    duckdb_destroy_prepare(&stmt);
+    return env->intern(env, "nil");
+  }
+
+  async_ctx *ctx = malloc(sizeof(async_ctx));
+  ctx->stmt = stmt;
+  ctx->callback_ref = env->make_global_ref(env, callback);
+  ctx->state = DuckDBSuccess;
+  ctx->error_msg = NULL;
+  ctx->is_done = false;
+  
+  if (pipe(ctx->pipe_fd) == -1) {
+    env->free_global_ref(env, ctx->callback_ref);
+    duckdb_destroy_prepare(&stmt);
+    free(ctx);
+    SIGNAL_ERROR(env, "error", "Failed to create pipe");
+    return env->intern(env, "nil");
+  }
+
+  pthread_t thread;
+  if (pthread_create(&thread, NULL, async_worker, ctx) != 0) {
+    env->free_global_ref(env, ctx->callback_ref);
+    duckdb_destroy_prepare(&stmt);
+    close(ctx->pipe_fd[0]);
+    close(ctx->pipe_fd[1]);
+    free(ctx);
+    SIGNAL_ERROR(env, "error", "Failed to create thread");
+    return env->intern(env, "nil");
+  }
+  pthread_detach(thread);
+
+  return env->make_user_ptr(env, async_ctx_finalizer, ctx);
+}
+
+static emacs_value
+Fduckdb_async_poll(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+{
+  (void)nargs;
+  (void)data;
+
+  if (!env->eq(env, env->type_of(env, args[0]), env->intern(env, "user-ptr")))
+  {
+    return env->intern(env, "nil");
+  }
+
+  async_ctx *ctx = (async_ctx *)env->get_user_ptr(env, args[0]);
+  if (!ctx->is_done) return env->intern(env, "nil");
+
+  /* Read from pipe to clear it */
+  char buf[1];
+  if (read(ctx->pipe_fd[0], buf, 1) != 1) {
+      /* Already read or error */
+  }
+
+  if (ctx->state == DuckDBError) {
+      emacs_value error_sym = env->intern(env, "duckdb-error");
+      emacs_value msg = env->make_string(env, ctx->error_msg ? ctx->error_msg : "Async query failed", 
+                                        ctx->error_msg ? strlen(ctx->error_msg) : 18);
+      env->non_local_exit_signal(env, error_sym, msg);
+      return env->intern(env, "nil");
+  }
+
+  /* Convert result to Lisp list of lists */
+  idx_t row_count = duckdb_row_count(&ctx->result);
+  emacs_value nil_sym = env->intern(env, "nil");
+  emacs_value cons_sym = env->intern(env, "cons");
+  emacs_value null_symbol_sym = env->intern(env, "duckdb-null-symbol");
+  emacs_value null_val = env->funcall(env, env->intern(env, "symbol-value"), 1, &null_symbol_sym);
+
+  emacs_value rows_list = nil_sym;
+  for (idx_t r = row_count; r > 0; r--)
+  {
+    idx_t row = r - 1;
+    emacs_value row_list = convert_row_to_list(env, &ctx->result, row, null_val);
+    rows_list = env->funcall(env, cons_sym, 2, (emacs_value[]){row_list, rows_list});
+  }
+
+  /* Call the callback */
+  env->funcall(env, ctx->callback_ref, 1, &rows_list);
+
+  /* Free the global reference to the callback */
+  env->free_global_ref(env, ctx->callback_ref);
+  ctx->callback_ref = NULL;
+
+  return env->intern(env, "t");
+}
+
 /* Module initialization */
 int
 emacs_module_init(struct emacs_runtime *ert)
@@ -837,6 +1016,16 @@ emacs_module_init(struct emacs_runtime *ert)
   emacs_value step_func = env->make_function(env, 1, 1, Fduckdb_step, "Execute a prepared statement and return one row.", NULL);
   emacs_value step_sym = env->intern(env, "duckdb-step");
   env->funcall(env, env->intern(env, "fset"), 2, (emacs_value[]){ step_sym, step_func });
+
+  /* Register Fduckdb_select_async */
+  emacs_value select_async_func = env->make_function(env, 3, 4, Fduckdb_select_async, "Execute a SQL query asynchronously.", NULL);
+  emacs_value select_async_sym = env->intern(env, "duckdb--select-async");
+  env->funcall(env, env->intern(env, "fset"), 2, (emacs_value[]){ select_async_sym, select_async_func });
+
+  /* Register Fduckdb_async_poll */
+  emacs_value async_poll_func = env->make_function(env, 1, 1, Fduckdb_async_poll, "Poll an asynchronous query.", NULL);
+  emacs_value async_poll_sym = env->intern(env, "duckdb-async-poll");
+  env->funcall(env, env->intern(env, "fset"), 2, (emacs_value[]){ async_poll_sym, async_poll_func });
 
   /* Provide duckdb-core */
   emacs_value provide_sym = env->intern(env, "provide");
