@@ -24,6 +24,6 @@ test: all
 
 asan-test: clean
 	CFLAGS="$(CFLAGS) -fsanitize=address -g3" LDFLAGS="$(LDFLAGS) -fsanitize=address" $(MAKE) all
-	LD_LIBRARY_PATH=./lib:$$LD_LIBRARY_PATH ASAN_OPTIONS=detect_leaks=0 $(EMACS) -batch -l tests/test-helper.el -l tests/duckdb-tests.el -f ert-run-tests-batch-and-exit
+	LD_LIBRARY_PATH=./lib:$$LD_LIBRARY_PATH ASAN_OPTIONS=detect_leaks=1 $(EMACS) -batch -l tests/test-helper.el -l tests/duckdb-tests.el -f ert-run-tests-batch-and-exit
 
 .PHONY: all clean test asan-test
