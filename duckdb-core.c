@@ -48,6 +48,29 @@ conn_finalizer(void *data)
   }
 }
 
+/* Prepared Statement Wrapper */
+typedef struct {
+  duckdb_prepared_statement stmt;
+  duckdb_result result;
+  bool result_executed;
+  idx_t current_row;
+} emacs_duckdb_stmt;
+
+/* Finalizer for duckdb_prepared_statement */
+static void
+stmt_finalizer(void *data)
+{
+  emacs_duckdb_stmt *stmt_ptr = (emacs_duckdb_stmt *)data;
+  if (stmt_ptr)
+  {
+    if (stmt_ptr->result_executed)
+      duckdb_destroy_result(&stmt_ptr->result);
+    if (stmt_ptr->stmt)
+      duckdb_destroy_prepare(&stmt_ptr->stmt);
+    free(stmt_ptr);
+  }
+}
+
 static emacs_value
 Fduckdb_open(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
 {
@@ -156,10 +179,77 @@ Fduckdb_disconnect(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *da
   return env->intern(env, "t");
 }
 
+/* Helper to bind parameters to a prepared statement */
+static bool
+bind_parameters(emacs_env *env, duckdb_prepared_statement stmt, emacs_value params)
+{
+  emacs_value car_sym = env->intern(env, "car");
+  emacs_value cdr_sym = env->intern(env, "cdr");
+  emacs_value nil_sym = env->intern(env, "nil");
+  emacs_value null_symbol_sym = env->intern(env, "duckdb-null-symbol");
+  emacs_value null_val = env->funcall(env, env->intern(env, "symbol-value"), 1, &null_symbol_sym);
+
+  idx_t nparams = duckdb_nparams(stmt);
+  
+  for (idx_t i = 1; i <= nparams; i++)
+  {
+    if (env->eq(env, params, nil_sym))
+    {
+       SIGNAL_ERROR(env, "duckdb-error", "Too few parameters provided");
+       return false;
+    }
+
+    emacs_value val = env->funcall(env, car_sym, 1, &params);
+    params = env->funcall(env, cdr_sym, 1, &params);
+
+    emacs_value type = env->type_of(env, val);
+    duckdb_state state;
+
+    if (env->eq(env, val, null_val))
+    {
+      state = duckdb_bind_null(stmt, i);
+    }
+    else if (env->eq(env, type, env->intern(env, "integer")))
+    {
+      state = duckdb_bind_int64(stmt, i, env->extract_integer(env, val));
+    }
+    else if (env->eq(env, type, env->intern(env, "float")))
+    {
+      state = duckdb_bind_double(stmt, i, env->extract_float(env, val));
+    }
+    else if (env->eq(env, type, env->intern(env, "string")))
+    {
+      char *str = extract_string(env, val);
+      state = duckdb_bind_varchar(stmt, i, str);
+      free(str);
+    }
+    else if (env->eq(env, val, env->intern(env, "t")))
+    {
+      state = duckdb_bind_boolean(stmt, i, true);
+    }
+    else if (env->eq(env, val, nil_sym))
+    {
+      state = duckdb_bind_boolean(stmt, i, false);
+    }
+    else
+    {
+       SIGNAL_ERROR(env, "duckdb-error", "Unsupported parameter type");
+       return false;
+    }
+
+    if (state == DuckDBError)
+    {
+      SIGNAL_ERROR(env, "duckdb-error", "Failed to bind parameter");
+      return false;
+    }
+  }
+
+  return true;
+}
+
 static emacs_value
 Fduckdb_execute(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
 {
-  (void)nargs;
   (void)data;
 
   if (!env->eq(env, env->type_of(env, args[0]), env->intern(env, "user-ptr")))
@@ -183,26 +273,122 @@ Fduckdb_execute(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
   }
 
   duckdb_result result;
-  if (duckdb_query(*conn_ptr, sql, &result) == DuckDBError)
+  if (nargs > 2)
   {
-    const char *error_msg = duckdb_result_error(&result);
-    SIGNAL_ERROR(env, "duckdb-error", error_msg ? error_msg : "Failed to execute query");
-    duckdb_destroy_result(&result);
+    /* Use prepared statement for parameters */
+    duckdb_prepared_statement stmt;
+    if (duckdb_prepare(*conn_ptr, sql, &stmt) == DuckDBError)
+    {
+      const char *error_msg = duckdb_prepare_error(stmt);
+      SIGNAL_ERROR(env, "duckdb-error", error_msg ? error_msg : "Failed to prepare statement");
+      duckdb_destroy_prepare(&stmt);
+      free(sql);
+      return env->intern(env, "nil");
+    }
     free(sql);
-    return env->intern(env, "nil");
+
+    if (!bind_parameters(env, stmt, args[2]))
+    {
+      duckdb_destroy_prepare(&stmt);
+      return env->intern(env, "nil");
+    }
+
+    if (duckdb_execute_prepared(stmt, &result) == DuckDBError)
+    {
+      const char *error_msg = duckdb_result_error(&result);
+      SIGNAL_ERROR(env, "duckdb-error", error_msg ? error_msg : "Failed to execute prepared query");
+      duckdb_destroy_result(&result);
+      duckdb_destroy_prepare(&stmt);
+      return env->intern(env, "nil");
+    }
+    duckdb_destroy_prepare(&stmt);
+  }
+  else
+  {
+    if (duckdb_query(*conn_ptr, sql, &result) == DuckDBError)
+    {
+      const char *error_msg = duckdb_result_error(&result);
+      SIGNAL_ERROR(env, "duckdb-error", error_msg ? error_msg : "Failed to execute query");
+      duckdb_destroy_result(&result);
+      free(sql);
+      return env->intern(env, "nil");
+    }
+    free(sql);
   }
 
-  free(sql);
   int64_t rows_changed = duckdb_rows_changed(&result);
   duckdb_destroy_result(&result);
 
   return env->make_integer(env, rows_changed);
 }
 
+/* Helper to convert a duckdb_result row to an emacs_value list */
+static emacs_value
+convert_row_to_list(emacs_env *env, duckdb_result *result, idx_t row, emacs_value null_val)
+{
+  idx_t col_count = duckdb_column_count(result);
+  emacs_value row_list = env->intern(env, "nil");
+  emacs_value cons_sym = env->intern(env, "cons");
+
+  for (idx_t c = col_count; c > 0; c--)
+  {
+    idx_t col = c - 1;
+    emacs_value val = null_val;
+
+    if (!duckdb_value_is_null(result, col, row))
+    {
+      duckdb_type type = duckdb_column_type(result, col);
+      switch (type)
+      {
+      case DUCKDB_TYPE_BOOLEAN:
+        val = env->intern(env, duckdb_value_boolean(result, col, row) ? "t" : "nil");
+        break;
+      case DUCKDB_TYPE_TINYINT:
+        val = env->make_integer(env, duckdb_value_int8(result, col, row));
+        break;
+      case DUCKDB_TYPE_SMALLINT:
+        val = env->make_integer(env, duckdb_value_int16(result, col, row));
+        break;
+      case DUCKDB_TYPE_INTEGER:
+        val = env->make_integer(env, duckdb_value_int32(result, col, row));
+        break;
+      case DUCKDB_TYPE_BIGINT:
+        val = env->make_integer(env, duckdb_value_int64(result, col, row));
+        break;
+      case DUCKDB_TYPE_FLOAT:
+        val = env->make_float(env, duckdb_value_float(result, col, row));
+        break;
+      case DUCKDB_TYPE_DOUBLE:
+        val = env->make_float(env, duckdb_value_double(result, col, row));
+        break;
+      case DUCKDB_TYPE_VARCHAR:
+      {
+        char *str = duckdb_value_varchar(result, col, row);
+        if (str) {
+          val = env->make_string(env, str, strlen(str));
+          duckdb_free(str);
+        }
+        break;
+      }
+      default:
+        {
+          char *str = duckdb_value_varchar(result, col, row);
+          if (str) {
+            val = env->make_string(env, str, strlen(str));
+            duckdb_free(str);
+          }
+        }
+        break;
+      }
+    }
+    row_list = env->funcall(env, cons_sym, 2, (emacs_value[]){val, row_list});
+  }
+  return row_list;
+}
+
 static emacs_value
 Fduckdb_select(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
 {
-  (void)nargs;
   (void)data;
 
   if (!env->eq(env, env->type_of(env, args[0]), env->intern(env, "user-ptr")))
@@ -226,87 +412,60 @@ Fduckdb_select(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
   }
 
   duckdb_result result;
-  if (duckdb_query(*conn_ptr, sql, &result) == DuckDBError)
+  if (nargs > 2)
   {
-    const char *error_msg = duckdb_result_error(&result);
-    SIGNAL_ERROR(env, "duckdb-error", error_msg ? error_msg : "Failed to execute query");
-    duckdb_destroy_result(&result);
+    duckdb_prepared_statement stmt;
+    if (duckdb_prepare(*conn_ptr, sql, &stmt) == DuckDBError)
+    {
+      const char *error_msg = duckdb_prepare_error(stmt);
+      SIGNAL_ERROR(env, "duckdb-error", error_msg ? error_msg : "Failed to prepare statement");
+      duckdb_destroy_prepare(&stmt);
+      free(sql);
+      return env->intern(env, "nil");
+    }
     free(sql);
-    return env->intern(env, "nil");
+
+    if (!bind_parameters(env, stmt, args[2]))
+    {
+      duckdb_destroy_prepare(&stmt);
+      return env->intern(env, "nil");
+    }
+
+    if (duckdb_execute_prepared(stmt, &result) == DuckDBError)
+    {
+      const char *error_msg = duckdb_result_error(&result);
+      SIGNAL_ERROR(env, "duckdb-error", error_msg ? error_msg : "Failed to execute prepared query");
+      duckdb_destroy_result(&result);
+      duckdb_destroy_prepare(&stmt);
+      return env->intern(env, "nil");
+    }
+    duckdb_destroy_prepare(&stmt);
+  }
+  else
+  {
+    if (duckdb_query(*conn_ptr, sql, &result) == DuckDBError)
+    {
+      const char *error_msg = duckdb_result_error(&result);
+      SIGNAL_ERROR(env, "duckdb-error", error_msg ? error_msg : "Failed to execute query");
+      duckdb_destroy_result(&result);
+      free(sql);
+      return env->intern(env, "nil");
+    }
+    free(sql);
   }
 
-  free(sql);
-
   idx_t row_count = duckdb_row_count(&result);
-  idx_t col_count = duckdb_column_count(&result);
-
-  emacs_value cons_sym = env->intern(env, "cons");
   emacs_value nil_sym = env->intern(env, "nil");
+  emacs_value cons_sym = env->intern(env, "cons");
   emacs_value null_symbol_sym = env->intern(env, "duckdb-null-symbol");
   emacs_value null_val = env->funcall(env, env->intern(env, "symbol-value"), 1, &null_symbol_sym);
 
   emacs_value rows_list = nil_sym;
 
-  /* Iterate rows backwards to build the list with cons efficiently */
   for (idx_t r = row_count; r > 0; r--)
   {
     idx_t row = r - 1;
-    emacs_value row_list = nil_sym;
-
-    for (idx_t c = col_count; c > 0; c--)
-    {
-      idx_t col = c - 1;
-      emacs_value val = null_val;
-
-      if (!duckdb_value_is_null(&result, col, row))
-      {
-        duckdb_type type = duckdb_column_type(&result, col);
-        switch (type)
-        {
-        case DUCKDB_TYPE_BOOLEAN:
-          val = env->intern(env, duckdb_value_boolean(&result, col, row) ? "t" : "nil");
-          break;
-        case DUCKDB_TYPE_TINYINT:
-          val = env->make_integer(env, duckdb_value_int8(&result, col, row));
-          break;
-        case DUCKDB_TYPE_SMALLINT:
-          val = env->make_integer(env, duckdb_value_int16(&result, col, row));
-          break;
-        case DUCKDB_TYPE_INTEGER:
-          val = env->make_integer(env, duckdb_value_int32(&result, col, row));
-          break;
-        case DUCKDB_TYPE_BIGINT:
-          val = env->make_integer(env, duckdb_value_int64(&result, col, row));
-          break;
-        case DUCKDB_TYPE_FLOAT:
-          val = env->make_float(env, duckdb_value_float(&result, col, row));
-          break;
-        case DUCKDB_TYPE_DOUBLE:
-          val = env->make_float(env, duckdb_value_double(&result, col, row));
-          break;
-        case DUCKDB_TYPE_VARCHAR:
-        {
-          char *str = duckdb_value_varchar(&result, col, row);
-          if (str) {
-            val = env->make_string(env, str, strlen(str));
-            duckdb_free(str);
-          }
-          break;
-        }
-        default:
-          /* Fallback to string for unhandled types */
-          {
-            char *str = duckdb_value_varchar(&result, col, row);
-            if (str) {
-              val = env->make_string(env, str, strlen(str));
-              duckdb_free(str);
-            }
-          }
-          break;
-        }
-      }
-      row_list = env->funcall(env, cons_sym, 2, (emacs_value[]){val, row_list});
-    }
+    emacs_value row_list = convert_row_to_list(env, &result, row, null_val);
     rows_list = env->funcall(env, cons_sym, 2, (emacs_value[]){row_list, rows_list});
   }
 
@@ -317,7 +476,6 @@ Fduckdb_select(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
 static emacs_value
 Fduckdb_select_columns(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
 {
-  (void)nargs;
   (void)data;
 
   if (!env->eq(env, env->type_of(env, args[0]), env->intern(env, "user-ptr")))
@@ -341,16 +499,47 @@ Fduckdb_select_columns(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void
   }
 
   duckdb_result result;
-  if (duckdb_query(*conn_ptr, sql, &result) == DuckDBError)
+  if (nargs > 2)
   {
-    const char *error_msg = duckdb_result_error(&result);
-    SIGNAL_ERROR(env, "duckdb-error", error_msg ? error_msg : "Failed to execute query");
-    duckdb_destroy_result(&result);
+    duckdb_prepared_statement stmt;
+    if (duckdb_prepare(*conn_ptr, sql, &stmt) == DuckDBError)
+    {
+      const char *error_msg = duckdb_prepare_error(stmt);
+      SIGNAL_ERROR(env, "duckdb-error", error_msg ? error_msg : "Failed to prepare statement");
+      duckdb_destroy_prepare(&stmt);
+      free(sql);
+      return env->intern(env, "nil");
+    }
     free(sql);
-    return env->intern(env, "nil");
-  }
 
-  free(sql);
+    if (!bind_parameters(env, stmt, args[2]))
+    {
+      duckdb_destroy_prepare(&stmt);
+      return env->intern(env, "nil");
+    }
+
+    if (duckdb_execute_prepared(stmt, &result) == DuckDBError)
+    {
+      const char *error_msg = duckdb_result_error(&result);
+      SIGNAL_ERROR(env, "duckdb-error", error_msg ? error_msg : "Failed to execute prepared query");
+      duckdb_destroy_result(&result);
+      duckdb_destroy_prepare(&stmt);
+      return env->intern(env, "nil");
+    }
+    duckdb_destroy_prepare(&stmt);
+  }
+  else
+  {
+    if (duckdb_query(*conn_ptr, sql, &result) == DuckDBError)
+    {
+      const char *error_msg = duckdb_result_error(&result);
+      SIGNAL_ERROR(env, "duckdb-error", error_msg ? error_msg : "Failed to execute query");
+      duckdb_destroy_result(&result);
+      free(sql);
+      return env->intern(env, "nil");
+    }
+    free(sql);
+  }
 
   idx_t col_count = duckdb_column_count(&result);
   idx_t total_rows = duckdb_row_count(&result);
@@ -363,8 +552,8 @@ Fduckdb_select_columns(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void
   emacs_value *col_vectors = malloc(col_count * sizeof(emacs_value));
   emacs_value make_vector_sym = env->intern(env, "make-vector");
   for (idx_t c = 0; c < col_count; c++) {
-    emacs_value args[] = { env->make_integer(env, total_rows), null_val };
-    col_vectors[c] = env->funcall(env, make_vector_sym, 2, args);
+    emacs_value vargs[] = { env->make_integer(env, total_rows), null_val };
+    col_vectors[c] = env->funcall(env, make_vector_sym, 2, vargs);
   }
 
   /* Iterate Chunks */
@@ -428,16 +617,6 @@ Fduckdb_select_columns(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void
           break;
         }
         default:
-          /* For unsupported types, try string conversion if possible, or leave as null */
-           {
-             /* Basic fallback using the legacy value accessor which is slow but safe */
-             /* Note: this mixes chunk access with legacy value access which might be weird but should work on result */
-             /* Actually, result is consistent. */
-             /* Let's try to get string value using duckdb_value_varchar for current row */
-             /* But wait, we are iterating chunks. We need global row index? */
-             /* Or we can just skip for now. The spec only requires basic types. */
-             /* Let's skip to keep it simple and safe. */
-           }
           break;
         }
         if (val != null_val) {
@@ -474,6 +653,131 @@ Fduckdb_select_columns(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void
   return plist;
 }
 
+static emacs_value
+Fduckdb_prepare(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+{
+  (void)nargs;
+  (void)data;
+
+  if (!env->eq(env, env->type_of(env, args[0]), env->intern(env, "user-ptr")))
+  {
+    SIGNAL_ERROR(env, "wrong-type-argument", "Expected user-ptr for duckdb-conn-ptr");
+    return env->intern(env, "nil");
+  }
+
+  duckdb_connection *conn_ptr = (duckdb_connection *)env->get_user_ptr(env, args[0]);
+  if (!conn_ptr || !*conn_ptr)
+  {
+    SIGNAL_ERROR(env, "duckdb-error", "Invalid connection pointer");
+    return env->intern(env, "nil");
+  }
+
+  char *sql = extract_string(env, args[1]);
+  if (!sql)
+  {
+    SIGNAL_ERROR(env, "error", "Invalid SQL argument");
+    return env->intern(env, "nil");
+  }
+
+  duckdb_prepared_statement stmt;
+  if (duckdb_prepare(*conn_ptr, sql, &stmt) == DuckDBError)
+  {
+    const char *error_msg = duckdb_prepare_error(stmt);
+    SIGNAL_ERROR(env, "duckdb-error", error_msg ? error_msg : "Failed to prepare statement");
+    duckdb_destroy_prepare(&stmt);
+    free(sql);
+    return env->intern(env, "nil");
+  }
+
+  free(sql);
+
+  emacs_duckdb_stmt *stmt_ptr = malloc(sizeof(emacs_duckdb_stmt));
+  stmt_ptr->stmt = stmt;
+  stmt_ptr->result_executed = false;
+  stmt_ptr->current_row = 0;
+
+  return env->make_user_ptr(env, stmt_finalizer, stmt_ptr);
+}
+
+static emacs_value
+Fduckdb_bind(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+{
+  (void)nargs;
+  (void)data;
+
+  if (!env->eq(env, env->type_of(env, args[0]), env->intern(env, "user-ptr")))
+  {
+    SIGNAL_ERROR(env, "wrong-type-argument", "Expected user-ptr for duckdb-stmt-ptr");
+    return env->intern(env, "nil");
+  }
+
+  emacs_duckdb_stmt *stmt_ptr = (emacs_duckdb_stmt *)env->get_user_ptr(env, args[0]);
+  if (!stmt_ptr || !stmt_ptr->stmt)
+  {
+    SIGNAL_ERROR(env, "duckdb-error", "Invalid statement pointer");
+    return env->intern(env, "nil");
+  }
+
+  /* If it was already executed, reset it? DuckDB prepared statements can be re-bound. */
+  if (stmt_ptr->result_executed) {
+      duckdb_destroy_result(&stmt_ptr->result);
+      stmt_ptr->result_executed = false;
+      stmt_ptr->current_row = 0;
+  }
+
+  if (bind_parameters(env, stmt_ptr->stmt, args[1]))
+    return env->intern(env, "t");
+  else
+    return env->intern(env, "nil");
+}
+
+static emacs_value
+Fduckdb_step(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+{
+  (void)nargs;
+  (void)data;
+
+  if (!env->eq(env, env->type_of(env, args[0]), env->intern(env, "user-ptr")))
+  {
+    SIGNAL_ERROR(env, "wrong-type-argument", "Expected user-ptr for duckdb-stmt-ptr");
+    return env->intern(env, "nil");
+  }
+
+  emacs_duckdb_stmt *stmt_ptr = (emacs_duckdb_stmt *)env->get_user_ptr(env, args[0]);
+  if (!stmt_ptr || !stmt_ptr->stmt)
+  {
+    SIGNAL_ERROR(env, "duckdb-error", "Invalid statement pointer");
+    return env->intern(env, "nil");
+  }
+
+  if (!stmt_ptr->result_executed)
+  {
+    if (duckdb_execute_prepared(stmt_ptr->stmt, &stmt_ptr->result) == DuckDBError)
+    {
+      const char *error_msg = duckdb_result_error(&stmt_ptr->result);
+      SIGNAL_ERROR(env, "duckdb-error", error_msg ? error_msg : "Failed to execute prepared statement");
+      duckdb_destroy_result(&stmt_ptr->result);
+      return env->intern(env, "nil");
+    }
+    stmt_ptr->result_executed = true;
+    stmt_ptr->current_row = 0;
+  }
+
+  idx_t row_count = duckdb_row_count(&stmt_ptr->result);
+  if (stmt_ptr->current_row >= row_count)
+  {
+    return env->intern(env, "nil");
+  }
+
+  emacs_value null_symbol_sym = env->intern(env, "duckdb-null-symbol");
+  emacs_value null_val = env->funcall(env, env->intern(env, "symbol-value"), 1, &null_symbol_sym);
+
+  emacs_value row_list = convert_row_to_list(env, &stmt_ptr->result, stmt_ptr->current_row, null_val);
+  stmt_ptr->current_row++;
+
+  return row_list;
+}
+
 /* Module initialization */
 int
 emacs_module_init(struct emacs_runtime *ert)
@@ -505,19 +809,34 @@ emacs_module_init(struct emacs_runtime *ert)
   env->funcall(env, env->intern(env, "fset"), 2, (emacs_value[]){ disconnect_sym, disconnect_func });
 
   /* Register Fduckdb_execute */
-  emacs_value execute_func = env->make_function(env, 2, 2, Fduckdb_execute, "Execute a SQL query in a DuckDB database.", NULL);
+  emacs_value execute_func = env->make_function(env, 2, 3, Fduckdb_execute, "Execute a SQL query in a DuckDB database.", NULL);
   emacs_value execute_sym = env->intern(env, "duckdb-execute");
   env->funcall(env, env->intern(env, "fset"), 2, (emacs_value[]){ execute_sym, execute_func });
 
   /* Register Fduckdb_select */
-  emacs_value select_func = env->make_function(env, 2, 2, Fduckdb_select, "Execute a SQL query and return results as a list of lists.", NULL);
+  emacs_value select_func = env->make_function(env, 2, 3, Fduckdb_select, "Execute a SQL query and return results as a list of lists.", NULL);
   emacs_value select_sym = env->intern(env, "duckdb-select");
   env->funcall(env, env->intern(env, "fset"), 2, (emacs_value[]){ select_sym, select_func });
 
   /* Register Fduckdb_select_columns */
-  emacs_value select_cols_func = env->make_function(env, 2, 2, Fduckdb_select_columns, "Execute a SQL query and return results as a plist of vectors (columnar).", NULL);
+  emacs_value select_cols_func = env->make_function(env, 2, 3, Fduckdb_select_columns, "Execute a SQL query and return results as a plist of vectors (columnar).", NULL);
   emacs_value select_cols_sym = env->intern(env, "duckdb-select-columns");
   env->funcall(env, env->intern(env, "fset"), 2, (emacs_value[]){ select_cols_sym, select_cols_func });
+
+  /* Register Fduckdb_prepare */
+  emacs_value prepare_func = env->make_function(env, 2, 2, Fduckdb_prepare, "Prepare a SQL statement.", NULL);
+  emacs_value prepare_sym = env->intern(env, "duckdb-prepare");
+  env->funcall(env, env->intern(env, "fset"), 2, (emacs_value[]){ prepare_sym, prepare_func });
+
+  /* Register Fduckdb_bind */
+  emacs_value bind_func = env->make_function(env, 2, 2, Fduckdb_bind, "Bind parameters to a prepared statement.", NULL);
+  emacs_value bind_sym = env->intern(env, "duckdb-bind");
+  env->funcall(env, env->intern(env, "fset"), 2, (emacs_value[]){ bind_sym, bind_func });
+
+  /* Register Fduckdb_step */
+  emacs_value step_func = env->make_function(env, 1, 1, Fduckdb_step, "Execute a prepared statement and return one row.", NULL);
+  emacs_value step_sym = env->intern(env, "duckdb-step");
+  env->funcall(env, env->intern(env, "fset"), 2, (emacs_value[]){ step_sym, step_func });
 
   /* Provide duckdb-core */
   emacs_value provide_sym = env->intern(env, "provide");

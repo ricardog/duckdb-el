@@ -70,5 +70,34 @@
       (let ((results (duckdb-select-columns conn "SELECT * FROM test;")))
         (should (equal (plist-get results :val) [:null]))))))
 
+(ert-deftest duckdb-parameterized-execute-test ()
+  "Test duckdb-execute with parameters."
+  (with-duckdb conn ":memory:"
+    (duckdb-execute conn "CREATE TABLE test (id INTEGER, name VARCHAR);")
+    (duckdb-execute conn "INSERT INTO test VALUES (?, ?);" '(1 "Alice"))
+    (duckdb-execute conn "INSERT INTO test VALUES (?, ?);" '(2 "Bob"))
+    (let ((results (duckdb-select conn "SELECT * FROM test ORDER BY id;")))
+      (should (equal results '((1 "Alice") (2 "Bob")))))))
+
+(ert-deftest duckdb-parameterized-select-test ()
+  "Test duckdb-select with parameters."
+  (with-duckdb conn ":memory:"
+    (duckdb-execute conn "CREATE TABLE test (id INTEGER, name VARCHAR);")
+    (duckdb-execute conn "INSERT INTO test VALUES (1, 'Alice'), (2, 'Bob');")
+    (let ((results (duckdb-select conn "SELECT name FROM test WHERE id = ?;" '(1))))
+      (should (equal results '(("Alice")))))))
+
+(ert-deftest duckdb-prepare-bind-step-test ()
+  "Test manual prepare, bind, and step."
+  (with-duckdb conn ":memory:"
+    (duckdb-execute conn "CREATE TABLE test (id INTEGER, name VARCHAR);")
+    (duckdb-execute conn "INSERT INTO test VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie');")
+    (let ((stmt (duckdb-prepare conn "SELECT * FROM test WHERE id > ? ORDER BY id;")))
+      (should (user-ptrp stmt))
+      (duckdb-bind stmt '(1))
+      (should (equal (duckdb-step stmt) '(2 "Bob")))
+      (should (equal (duckdb-step stmt) '(3 "Charlie")))
+      (should (equal (duckdb-step stmt) nil)))))
+
 (provide 'duckdb-tests)
 ;;; duckdb-tests.el ends here
