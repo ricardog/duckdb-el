@@ -77,7 +77,8 @@ We follow a "Lisp-Driven Testing" approach. Since the C code is an extension of 
 
 * **Address Sanitizer:** Use address sanitizer to ensure there are no
   memory bugs.  Add a target to the Makefile to build a version of the
-  module with address sanitizer and then run the tests.
+  module with address sanitizer and then run the tests. Always run the
+  asan tests before declaring work completed.
 
 
 ## 6. Agent Instructions for New Code

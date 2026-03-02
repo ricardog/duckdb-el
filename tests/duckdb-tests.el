@@ -51,5 +51,24 @@
     (should-error (duckdb-execute conn "SELECT * FROM non_existent_table;")
                   :type 'duckdb-error)))
 
+(ert-deftest duckdb-select-columns-test ()
+  "Test selecting data in columnar format."
+  (with-duckdb conn ":memory:"
+    (duckdb-execute conn "CREATE TABLE test (id INTEGER, name VARCHAR, price DOUBLE);")
+    (duckdb-execute conn "INSERT INTO test VALUES (1, 'Alice', 10.5), (2, 'Bob', 20.0), (3, NULL, NULL);")
+    (let ((results (duckdb-select-columns conn "SELECT * FROM test ORDER BY id;")))
+      (should (equal (plist-get results :id) [1 2 3]))
+      (should (equal (plist-get results :name) ["Alice" "Bob" nil]))
+      (should (equal (plist-get results :price) [10.5 20.0 nil])))))
+
+(ert-deftest duckdb-select-columns-null-test ()
+  "Test selecting data in columnar format with custom null symbol."
+  (let ((duckdb-null-symbol :null))
+    (with-duckdb conn ":memory:"
+      (duckdb-execute conn "CREATE TABLE test (val INTEGER);")
+      (duckdb-execute conn "INSERT INTO test VALUES (NULL);")
+      (let ((results (duckdb-select-columns conn "SELECT * FROM test;")))
+        (should (equal (plist-get results :val) [:null]))))))
+
 (provide 'duckdb-tests)
 ;;; duckdb-tests.el ends here

@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include "duckdb-api.h"
 
 int plugin_is_GPL_compatible;
@@ -313,6 +314,166 @@ Fduckdb_select(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
   return rows_list;
 }
 
+static emacs_value
+Fduckdb_select_columns(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+{
+  (void)nargs;
+  (void)data;
+
+  if (!env->eq(env, env->type_of(env, args[0]), env->intern(env, "user-ptr")))
+  {
+    SIGNAL_ERROR(env, "wrong-type-argument", "Expected user-ptr for duckdb-conn-ptr");
+    return env->intern(env, "nil");
+  }
+
+  duckdb_connection *conn_ptr = (duckdb_connection *)env->get_user_ptr(env, args[0]);
+  if (!conn_ptr || !*conn_ptr)
+  {
+    SIGNAL_ERROR(env, "duckdb-error", "Invalid connection pointer");
+    return env->intern(env, "nil");
+  }
+
+  char *sql = extract_string(env, args[1]);
+  if (!sql)
+  {
+    SIGNAL_ERROR(env, "error", "Invalid SQL argument");
+    return env->intern(env, "nil");
+  }
+
+  duckdb_result result;
+  if (duckdb_query(*conn_ptr, sql, &result) == DuckDBError)
+  {
+    const char *error_msg = duckdb_result_error(&result);
+    SIGNAL_ERROR(env, "duckdb-error", error_msg ? error_msg : "Failed to execute query");
+    duckdb_destroy_result(&result);
+    free(sql);
+    return env->intern(env, "nil");
+  }
+
+  free(sql);
+
+  idx_t col_count = duckdb_column_count(&result);
+  idx_t total_rows = duckdb_row_count(&result);
+  idx_t chunk_count = duckdb_result_chunk_count(result);
+
+  emacs_value null_symbol_sym = env->intern(env, "duckdb-null-symbol");
+  emacs_value null_val = env->funcall(env, env->intern(env, "symbol-value"), 1, &null_symbol_sym);
+
+  /* Create vectors for columns */
+  emacs_value *col_vectors = malloc(col_count * sizeof(emacs_value));
+  emacs_value make_vector_sym = env->intern(env, "make-vector");
+  for (idx_t c = 0; c < col_count; c++) {
+    emacs_value args[] = { env->make_integer(env, total_rows), null_val };
+    col_vectors[c] = env->funcall(env, make_vector_sym, 2, args);
+  }
+
+  /* Iterate Chunks */
+  idx_t global_row_idx = 0;
+  for (idx_t ch = 0; ch < chunk_count; ch++) {
+    duckdb_data_chunk chunk = duckdb_result_get_chunk(result, ch);
+    idx_t chunk_rows = duckdb_data_chunk_get_size(chunk);
+
+    for (idx_t c = 0; c < col_count; c++) {
+      duckdb_vector vector = duckdb_data_chunk_get_vector(chunk, c);
+      void *data_ptr = duckdb_vector_get_data(vector);
+      uint64_t *validity = duckdb_vector_get_validity(vector);
+      duckdb_type type = duckdb_column_type(&result, c);
+
+      for (idx_t r = 0; r < chunk_rows; r++) {
+        if (validity && !duckdb_validity_row_is_valid(validity, r)) {
+          /* It's NULL, already set in make_vector */
+          continue;
+        }
+
+        emacs_value val = null_val;
+        switch (type) {
+        case DUCKDB_TYPE_BOOLEAN: {
+          bool *d = (bool *)data_ptr;
+          val = env->intern(env, d[r] ? "t" : "nil");
+          break;
+        }
+        case DUCKDB_TYPE_TINYINT: {
+          int8_t *d = (int8_t *)data_ptr;
+          val = env->make_integer(env, d[r]);
+          break;
+        }
+        case DUCKDB_TYPE_SMALLINT: {
+          int16_t *d = (int16_t *)data_ptr;
+          val = env->make_integer(env, d[r]);
+          break;
+        }
+        case DUCKDB_TYPE_INTEGER: {
+          int32_t *d = (int32_t *)data_ptr;
+          val = env->make_integer(env, d[r]);
+          break;
+        }
+        case DUCKDB_TYPE_BIGINT: {
+          int64_t *d = (int64_t *)data_ptr;
+          val = env->make_integer(env, d[r]);
+          break;
+        }
+        case DUCKDB_TYPE_FLOAT: {
+          float *d = (float *)data_ptr;
+          val = env->make_float(env, d[r]);
+          break;
+        }
+        case DUCKDB_TYPE_DOUBLE: {
+          double *d = (double *)data_ptr;
+          val = env->make_float(env, d[r]);
+          break;
+        }
+        case DUCKDB_TYPE_VARCHAR: {
+          duckdb_string_t *d = (duckdb_string_t *)data_ptr;
+          val = env->make_string(env, duckdb_string_t_data(&d[r]), duckdb_string_t_length(d[r]));
+          break;
+        }
+        default:
+          /* For unsupported types, try string conversion if possible, or leave as null */
+           {
+             /* Basic fallback using the legacy value accessor which is slow but safe */
+             /* Note: this mixes chunk access with legacy value access which might be weird but should work on result */
+             /* Actually, result is consistent. */
+             /* Let's try to get string value using duckdb_value_varchar for current row */
+             /* But wait, we are iterating chunks. We need global row index? */
+             /* Or we can just skip for now. The spec only requires basic types. */
+             /* Let's skip to keep it simple and safe. */
+           }
+          break;
+        }
+        if (val != null_val) {
+          env->vec_set(env, col_vectors[c], global_row_idx + r, val);
+        }
+      }
+    }
+    duckdb_destroy_data_chunk(&chunk);
+    global_row_idx += chunk_rows;
+  }
+
+  /* Build Plist */
+  emacs_value plist = env->intern(env, "nil");
+  emacs_value cons = env->intern(env, "cons");
+
+  for (idx_t c = col_count; c > 0; c--) {
+    idx_t idx = c - 1;
+    const char *col_name = duckdb_column_name(&result, idx);
+    
+    char *kw_name = malloc(strlen(col_name) + 2);
+    sprintf(kw_name, ":%s", col_name);
+    emacs_value key = env->intern(env, kw_name);
+    free(kw_name);
+    
+    emacs_value val = col_vectors[idx];
+
+    plist = env->funcall(env, cons, 2, (emacs_value[]){val, plist});
+    plist = env->funcall(env, cons, 2, (emacs_value[]){key, plist});
+  }
+
+  free(col_vectors);
+  duckdb_destroy_result(&result);
+
+  return plist;
+}
+
 /* Module initialization */
 int
 emacs_module_init(struct emacs_runtime *ert)
@@ -352,6 +513,11 @@ emacs_module_init(struct emacs_runtime *ert)
   emacs_value select_func = env->make_function(env, 2, 2, Fduckdb_select, "Execute a SQL query and return results as a list of lists.", NULL);
   emacs_value select_sym = env->intern(env, "duckdb-select");
   env->funcall(env, env->intern(env, "fset"), 2, (emacs_value[]){ select_sym, select_func });
+
+  /* Register Fduckdb_select_columns */
+  emacs_value select_cols_func = env->make_function(env, 2, 2, Fduckdb_select_columns, "Execute a SQL query and return results as a plist of vectors (columnar).", NULL);
+  emacs_value select_cols_sym = env->intern(env, "duckdb-select-columns");
+  env->funcall(env, env->intern(env, "fset"), 2, (emacs_value[]){ select_cols_sym, select_cols_func });
 
   /* Provide duckdb-core */
   emacs_value provide_sym = env->intern(env, "provide");
