@@ -178,11 +178,13 @@
     (duckdb-execute conn "INSERT INTO test VALUES ('2023-01-01 12:00:00', '\\x01\\x02\\x03'::BLOB);")
     (let ((results (duckdb-select conn "SELECT * FROM test;")))
       (should (equal (length results) 1))
-      (should (integerp (caar results)))
+      (should (stringp (caar results)))
+      (should (string-prefix-p "2023-01-01" (caar results)))
       (should (stringp (cadar results))))
     ;; Test columnar as well
     (let ((results (duckdb-select-columns conn "SELECT * FROM test;")))
-      (should (integerp (aref (plist-get results :ts) 0)))
+      (should (stringp (aref (plist-get results :ts) 0)))
+      (should (string-prefix-p "2023-01-01" (aref (plist-get results :ts) 0)))
       (should (stringp (aref (plist-get results :data) 0))))))
 
 (ert-deftest duckdb-select-varchar-invalid-utf8-test ()

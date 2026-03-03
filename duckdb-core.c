@@ -103,6 +103,18 @@ make_blob_value(emacs_env *env, const char *data, ptrdiff_t length)
   return env->funcall(env, decode_func, 1, &b64_str);
 }
 
+static emacs_value
+make_timestamp_value(emacs_env *env, duckdb_timestamp ts)
+{
+  duckdb_timestamp_struct ts_struct = duckdb_from_timestamp(ts);
+  char buf[64];
+  int len = snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%06d",
+                     ts_struct.date.year, ts_struct.date.month, ts_struct.date.day,
+                     ts_struct.time.hour, ts_struct.time.min, ts_struct.time.sec,
+                     ts_struct.time.micros);
+  return env->make_string(env, buf, len);
+}
+
 /* Finalizer for duckdb_database */
 static void
 db_finalizer(void *data)
@@ -524,7 +536,7 @@ convert_row_to_list(emacs_env *env, duckdb_result *result, idx_t row, emacs_valu
       case DUCKDB_TYPE_TIMESTAMP:
       {
         duckdb_timestamp ts = duckdb_value_timestamp(result, col, row);
-        val = env->make_integer(env, ts.micros);
+        val = make_timestamp_value(env, ts);
         break;
       }
       case DUCKDB_TYPE_BLOB:
@@ -792,7 +804,7 @@ Fduckdb_select_columns(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void
         }
         case DUCKDB_TYPE_TIMESTAMP: {
           duckdb_timestamp *d = (duckdb_timestamp *)data_ptr;
-          val = env->make_integer(env, d[r].micros);
+          val = make_timestamp_value(env, d[r]);
           break;
         }
         case DUCKDB_TYPE_BLOB: {
