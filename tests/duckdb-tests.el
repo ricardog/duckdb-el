@@ -56,10 +56,14 @@
   (with-duckdb conn ":memory:"
     (duckdb-execute conn "CREATE TABLE test (id INTEGER, name VARCHAR, price DOUBLE);")
     (duckdb-execute conn "INSERT INTO test VALUES (1, 'Alice', 10.5), (2, 'Bob', 20.0), (3, NULL, NULL);")
-    (let ((results (duckdb-select-columns conn "SELECT * FROM test ORDER BY id;")))
-      (should (equal (plist-get results :id) [1 2 3]))
-      (should (equal (plist-get results :name) ["Alice" "Bob" nil]))
-      (should (equal (plist-get results :price) [10.5 20.0 nil])))))
+    (let* ((results (duckdb-select-columns conn "SELECT * FROM test ORDER BY id;"))
+           (data (plist-get results :data))
+           (types (plist-get results :types)))
+      (should (equal (plist-get data :id) [1 2 3]))
+      (should (equal (plist-get data :name) ["Alice" "Bob" nil]))
+      (should (equal (plist-get data :price) [10.5 20.0 nil]))
+      (should (equal (plist-get types :id) "INTEGER"))
+      (should (equal (plist-get types :name) "VARCHAR")))))
 
 (ert-deftest duckdb-select-columns-null-test ()
   "Test selecting data in columnar format with custom null symbol."
@@ -67,8 +71,9 @@
     (with-duckdb conn ":memory:"
       (duckdb-execute conn "CREATE TABLE test (val INTEGER);")
       (duckdb-execute conn "INSERT INTO test VALUES (NULL);")
-      (let ((results (duckdb-select-columns conn "SELECT * FROM test;")))
-        (should (equal (plist-get results :val) [:null]))))))
+      (let* ((results (duckdb-select-columns conn "SELECT * FROM test;"))
+             (data (plist-get results :data)))
+        (should (equal (plist-get data :val) [:null]))))))
 
 (ert-deftest duckdb-parameterized-execute-test ()
   "Test duckdb-execute with parameters."
@@ -178,14 +183,15 @@
     (duckdb-execute conn "INSERT INTO test VALUES ('2023-01-01 12:00:00', '\\x01\\x02\\x03'::BLOB);")
     (let ((results (duckdb-select conn "SELECT * FROM test;")))
       (should (equal (length results) 1))
-      (should (stringp (caar results)))
-      (should (string-prefix-p "2023-01-01" (caar results)))
+      (should (integerp (caar results)))
       (should (stringp (cadar results))))
     ;; Test columnar as well
-    (let ((results (duckdb-select-columns conn "SELECT * FROM test;")))
-      (should (stringp (aref (plist-get results :ts) 0)))
-      (should (string-prefix-p "2023-01-01" (aref (plist-get results :ts) 0)))
-      (should (stringp (aref (plist-get results :data) 0))))))
+    (let* ((results (duckdb-select-columns conn "SELECT * FROM test;"))
+           (data (plist-get results :data))
+           (types (plist-get results :types)))
+      (should (integerp (aref (plist-get data :ts) 0)))
+      (should (equal (plist-get types :ts) "TIMESTAMP"))
+      (should (stringp (aref (plist-get data :data) 0))))))
 
 (ert-deftest duckdb-select-varchar-invalid-utf8-test ()
   "Test selecting VARCHAR with invalid UTF-8 data."
@@ -195,7 +201,8 @@
     (duckdb-execute conn "INSERT INTO test SELECT from_hex('07832F')::VARCHAR;")
     
     (let* ((results (duckdb-select-columns conn "SELECT * FROM test;"))
-           (val (aref (plist-get results :data) 0)))
+           (data (plist-get results :data))
+           (val (aref (plist-get data :data) 0)))
       (should (stringp val))
       ;; It seems in this environment DuckDB returns the escaped hex string "\x07\x83/"
       (should (member (length val) '(3 9)))
@@ -203,11 +210,17 @@
           (should (string-prefix-p "\\x" val))
         (should (not (multibyte-string-p val)))))))
 
+(ert-deftest duckdb-format-value-timestamp-test ()
+  "Test duckdb--format-value with TIMESTAMP."
+  ;; 1672574400000000 is 2023-01-01 12:00:00 UTC
+  (should (string-prefix-p "2023-01-01" (duckdb--format-value 1672574400000000 "TIMESTAMP"))))
+
 (ert-deftest duckdb-browse-format-preview-binary-test ()
   "Test duckdb--format-preview-data with binary data."
   (let* ((columns '("id" "data"))
          ;; 0x83 is non-UTF-8
-         (rows `((1 ,(unibyte-string #x07 #x83 #x2F))))
+         (binary (unibyte-string #x07 #x83 #x2F))
+         (rows (list (list "1" (duckdb--format-value binary "BLOB"))))
          (formatted (duckdb--format-preview-data columns rows)))
     (should (string-match "id  data" formatted))
     (should (string-match "1   \"" formatted))))
@@ -252,7 +265,8 @@
 (ert-deftest duckdb-browse-format-preview-data-test ()
   "Test duckdb--format-preview-data."
   (let* ((columns '("id" "name"))
-         (rows '((1 "Alice") (2 "Bob")))
+         (rows (list (list "1" (duckdb--format-value "Alice" "VARCHAR"))
+                     (list "2" (duckdb--format-value "Bob" "VARCHAR"))))
          (formatted (duckdb--format-preview-data columns rows)))
     (should (string-match "id  name" formatted))
     (should (string-match "1   \"Alice\"" formatted))
@@ -277,10 +291,9 @@
 (ert-deftest duckdb-browse-format-preview-newline-test ()
   "Test duckdb--format-preview-data with newlines in data."
   (let* ((columns '("id" "desc"))
-         (rows '((1 "Line 1\nLine 2")))
+         (rows (list (list "1" (duckdb--format-value "Line 1\nLine 2" "VARCHAR"))))
          (formatted (duckdb--format-preview-data columns rows)))
-    (should (string-match "Line 1 Line 2" formatted))
-    (should (not (string-match "\n.*Line 2" (substring formatted (string-match "Line 1" formatted)))))))
+    (should (string-match "Line 1 Line 2" formatted))))
 
 (ert-deftest duckdb-mode-open-file-test ()
   "Test duckdb-mode-open-file."

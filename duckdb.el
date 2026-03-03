@@ -183,16 +183,33 @@ Optional PARAMS are bound to the query."
         (setq duckdb--expanded-overlay (make-overlay start (point)))
         (overlay-put duckdb--expanded-overlay 'duckdb-expanded t)))))
 
+(defun duckdb--format-value (val type)
+  "Format VAL based on its DuckDB TYPE."
+  (cond
+   ((null val) "NULL")
+   ((string= type "TIMESTAMP")
+    (let ((secs (/ val 1000000))
+          (micros (% val 1000000)))
+      (format-time-string "%Y-%m-%d %H:%M:%S" (seconds-to-time secs))))
+   ((and (stringp val) (not (multibyte-string-p val)))
+    (replace-regexp-in-string "\n" " " (prin1-to-string val)))
+   (t (replace-regexp-in-string "\n" " " (format "%s" val)))))
+
 (defun duckdb--get-table-preview (conn table)
   "Get first 100 rows of TABLE and format them."
   (let* ((sql (format "SELECT * FROM %s LIMIT 100" table))
          (results (duckdb-select-columns conn sql))
-         (keys (cl-loop for (k v) on results by 'cddr collect k))
+         (data-plist (plist-get results :data))
+         (types-plist (plist-get results :types))
+         (keys (cl-loop for (k v) on data-plist by 'cddr collect k))
          (columns (mapcar (lambda (k) (substring (symbol-name k) 1)) keys))
-         (data (cl-loop for (k v) on results by 'cddr collect v))
+         (data (cl-loop for (k v) on data-plist by 'cddr collect v))
+         (types (cl-loop for (k v) on types-plist by 'cddr collect v))
          (num-rows (if data (length (car data)) 0))
          (rows (cl-loop for r from 0 to (1- num-rows)
-                        collect (mapcar (lambda (col-vec) (aref col-vec r)) data))))
+                        collect (cl-loop for col-vec in data
+                                         for type in types
+                                         collect (duckdb--format-value (aref col-vec r) type)))))
     (duckdb--format-preview-data columns rows)))
 
 (defun duckdb--format-preview-data (columns rows)
@@ -200,13 +217,6 @@ Optional PARAMS are bound to the query."
   (if (null columns)
       "  (No columns)\n"
     (let* ((widths (mapcar #'string-width columns))
-           (val-to-string (lambda (v)
-                            (let ((s (cond
-                                      ((null v) "NULL")
-                                      ((and (stringp v) (not (multibyte-string-p v)))
-                                       (prin1-to-string v))
-                                      (t (format "%s" v)))))
-                              (replace-regexp-in-string "\n" " " s))))
            (pad (lambda (s w)
                   (let ((sw (string-width s)))
                     (if (>= sw w) s
@@ -214,7 +224,7 @@ Optional PARAMS are bound to the query."
            (widths (cl-loop for row in rows
                             do (setq widths (cl-loop for val in row
                                                      for w in widths
-                                                     collect (max w (string-width (funcall val-to-string val)))))
+                                                     collect (max w (string-width (if (stringp val) val (format "%s" val))))))
                             finally return widths))
            (out ""))
       ;; Header
@@ -228,7 +238,7 @@ Optional PARAMS are bound to the query."
         (setq out (concat out "  "))
         (cl-loop for val in row
                  for w in widths
-                 do (let ((s (funcall val-to-string val)))
+                 do (let ((s (if (stringp val) val (format "%s" val))))
                       (setq out (concat out (funcall pad s w) "  "))))
         (setq out (concat out "\n")))
       out)))
@@ -252,12 +262,17 @@ Optional PARAMS are bound to the query."
     (unless conn
       (error "No active DuckDB connection"))
     (let* ((results (duckdb-select-columns conn "SELECT table_name, table_schema, table_type FROM information_schema.tables WHERE table_schema = 'main'"))
-           (keys (cl-loop for (k v) on results by 'cddr collect k))
+           (data-plist (plist-get results :data))
+           (types-plist (plist-get results :types))
+           (keys (cl-loop for (k v) on data-plist by 'cddr collect k))
            (columns (mapcar (lambda (k) (substring (symbol-name k) 1)) keys))
-           (data (cl-loop for (k v) on results by 'cddr collect v))
+           (data (cl-loop for (k v) on data-plist by 'cddr collect v))
+           (types (cl-loop for (k v) on types-plist by 'cddr collect v))
            (num-rows (if data (length (car data)) 0))
            (rows (cl-loop for r from 0 to (1- num-rows)
-                          collect (mapcar (lambda (col-vec) (aref col-vec r)) data))))
+                          collect (cl-loop for col-vec in data
+                                           for type in types
+                                           collect (duckdb--format-value (aref col-vec r) type)))))
       (duckdb--render-results columns rows))))
 
 (defun duckdb-mode-open-file (path)
@@ -356,12 +371,17 @@ Optional PARAMS are bound to the query."
 (defun duckdb--query-and-display-internal (conn-ptr sql &optional params)
   "Internal helper for query and display."
   (let* ((results (duckdb-select-columns conn-ptr sql params))
-         (keys (cl-loop for (k v) on results by 'cddr collect k))
+         (data-plist (plist-get results :data))
+         (types-plist (plist-get results :types))
+         (keys (cl-loop for (k v) on data-plist by 'cddr collect k))
          (columns (mapcar (lambda (k) (substring (symbol-name k) 1)) keys))
-         (data (cl-loop for (k v) on results by 'cddr collect v))
+         (data (cl-loop for (k v) on data-plist by 'cddr collect v))
+         (types (cl-loop for (k v) on types-plist by 'cddr collect v))
          (num-rows (if data (length (car data)) 0))
          (rows (cl-loop for r from 0 to (1- num-rows)
-                        collect (mapcar (lambda (col-vec) (aref col-vec r)) data))))
+                        collect (cl-loop for col-vec in data
+                                         for type in types
+                                         collect (duckdb--format-value (aref col-vec r) type)))))
     (duckdb--render-results columns rows)))
 
 (defun duckdb-query-and-display (db-or-path sql &optional params)

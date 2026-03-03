@@ -103,18 +103,6 @@ make_blob_value(emacs_env *env, const char *data, ptrdiff_t length)
   return env->funcall(env, decode_func, 1, &b64_str);
 }
 
-static emacs_value
-make_timestamp_value(emacs_env *env, duckdb_timestamp ts)
-{
-  duckdb_timestamp_struct ts_struct = duckdb_from_timestamp(ts);
-  char buf[64];
-  int len = snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%06d",
-                     ts_struct.date.year, ts_struct.date.month, ts_struct.date.day,
-                     ts_struct.time.hour, ts_struct.time.min, ts_struct.time.sec,
-                     ts_struct.time.micros);
-  return env->make_string(env, buf, len);
-}
-
 /* Finalizer for duckdb_database */
 static void
 db_finalizer(void *data)
@@ -204,6 +192,39 @@ async_ctx_finalizer(void *data)
         free(ctx->error_msg);
     }
     free(ctx);
+  }
+}
+
+static const char *
+duckdb_type_name(duckdb_type type)
+{
+  switch (type) {
+  case DUCKDB_TYPE_BOOLEAN: return "BOOLEAN";
+  case DUCKDB_TYPE_TINYINT: return "TINYINT";
+  case DUCKDB_TYPE_SMALLINT: return "SMALLINT";
+  case DUCKDB_TYPE_INTEGER: return "INTEGER";
+  case DUCKDB_TYPE_BIGINT: return "BIGINT";
+  case DUCKDB_TYPE_FLOAT: return "FLOAT";
+  case DUCKDB_TYPE_DOUBLE: return "DOUBLE";
+  case DUCKDB_TYPE_TIMESTAMP: return "TIMESTAMP";
+  case DUCKDB_TYPE_DATE: return "DATE";
+  case DUCKDB_TYPE_TIME: return "TIME";
+  case DUCKDB_TYPE_INTERVAL: return "INTERVAL";
+  case DUCKDB_TYPE_HUGEINT: return "HUGEINT";
+  case DUCKDB_TYPE_VARCHAR: return "VARCHAR";
+  case DUCKDB_TYPE_BLOB: return "BLOB";
+  case DUCKDB_TYPE_TIMESTAMP_S: return "TIMESTAMP_S";
+  case DUCKDB_TYPE_TIMESTAMP_MS: return "TIMESTAMP_MS";
+  case DUCKDB_TYPE_TIMESTAMP_NS: return "TIMESTAMP_NS";
+  case DUCKDB_TYPE_ENUM: return "ENUM";
+  case DUCKDB_TYPE_LIST: return "LIST";
+  case DUCKDB_TYPE_STRUCT: return "STRUCT";
+  case DUCKDB_TYPE_MAP: return "MAP";
+  case DUCKDB_TYPE_UNION: return "UNION";
+  case DUCKDB_TYPE_BIT: return "BIT";
+  case DUCKDB_TYPE_TIME_TZ: return "TIME_TZ";
+  case DUCKDB_TYPE_TIMESTAMP_TZ: return "TIMESTAMP_TZ";
+  default: return "UNKNOWN";
   }
 }
 
@@ -536,7 +557,7 @@ convert_row_to_list(emacs_env *env, duckdb_result *result, idx_t row, emacs_valu
       case DUCKDB_TYPE_TIMESTAMP:
       {
         duckdb_timestamp ts = duckdb_value_timestamp(result, col, row);
-        val = make_timestamp_value(env, ts);
+        val = env->make_integer(env, ts.micros);
         break;
       }
       case DUCKDB_TYPE_BLOB:
@@ -804,7 +825,7 @@ Fduckdb_select_columns(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void
         }
         case DUCKDB_TYPE_TIMESTAMP: {
           duckdb_timestamp *d = (duckdb_timestamp *)data_ptr;
-          val = make_timestamp_value(env, d[r]);
+          val = env->make_integer(env, d[r].micros);
           break;
         }
         case DUCKDB_TYPE_BLOB: {
@@ -833,13 +854,16 @@ Fduckdb_select_columns(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void
     global_row_idx += chunk_rows;
   }
 
-  /* Build Plist */
-  emacs_value plist = env->intern(env, "nil");
+  /* Build Plists */
+  emacs_value data_plist = env->intern(env, "nil");
+  emacs_value types_plist = env->intern(env, "nil");
   emacs_value cons = env->intern(env, "cons");
 
   for (idx_t c = col_count; c > 0; c--) {
     idx_t idx = c - 1;
     const char *col_name = duckdb_column_name(&result, idx);
+    duckdb_type type = duckdb_column_type(&result, idx);
+    const char *type_name = duckdb_type_name(type);
     
     char *kw_name = malloc(strlen(col_name) + 2);
     sprintf(kw_name, ":%s", col_name);
@@ -847,15 +871,26 @@ Fduckdb_select_columns(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void
     free(kw_name);
     
     emacs_value val = col_vectors[idx];
+    emacs_value type_val = env->make_string(env, type_name, strlen(type_name));
 
-    plist = env->funcall(env, cons, 2, (emacs_value[]){val, plist});
-    plist = env->funcall(env, cons, 2, (emacs_value[]){key, plist});
+    data_plist = env->funcall(env, cons, 2, (emacs_value[]){val, data_plist});
+    data_plist = env->funcall(env, cons, 2, (emacs_value[]){key, data_plist});
+
+    types_plist = env->funcall(env, cons, 2, (emacs_value[]){type_val, types_plist});
+    types_plist = env->funcall(env, cons, 2, (emacs_value[]){key, types_plist});
   }
 
   free(col_vectors);
   duckdb_destroy_result(&result);
 
-  return plist;
+  /* Return (:data data_plist :types types_plist) */
+  emacs_value result_plist = env->intern(env, "nil");
+  result_plist = env->funcall(env, cons, 2, (emacs_value[]){types_plist, result_plist});
+  result_plist = env->funcall(env, cons, 2, (emacs_value[]){env->intern(env, ":types"), result_plist});
+  result_plist = env->funcall(env, cons, 2, (emacs_value[]){data_plist, result_plist});
+  result_plist = env->funcall(env, cons, 2, (emacs_value[]){env->intern(env, ":data"), result_plist});
+
+  return result_plist;
 }
 
 static emacs_value
