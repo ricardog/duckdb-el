@@ -16,6 +16,16 @@
 
 (define-error 'duckdb-error "DuckDB error" 'error)
 
+(defface duckdb-browse-header
+  '((t :inherit header-line :background "grey90" :weight bold))
+  "Face for the header in DuckDB browse buffer."
+  :group 'duckdb)
+
+(defface duckdb-browse-table-name
+  '((t :inherit default :background "grey95" :weight bold))
+  "Face for table names in DuckDB browse buffer."
+  :group 'duckdb)
+
 (declare-function duckdb-open "duckdb-core.so" (path))
 (declare-function duckdb-close "duckdb-core.so" (db-ptr))
 (declare-function duckdb-connect "duckdb-core.so" (db-ptr))
@@ -95,6 +105,7 @@ Optional PARAMS are bound to the query."
 
 (define-derived-mode duckdb-browse-mode special-mode "DuckDB-Browse"
   "Major mode for browsing DuckDB tables."
+  (setq truncate-lines t)
   (setq-local revert-buffer-function #'duckdb-browse-refresh)
   (add-hook 'kill-buffer-hook #'duckdb-browse-cleanup nil t))
 
@@ -106,7 +117,8 @@ Optional PARAMS are bound to the query."
   (let ((inhibit-read-only t)
         (pos (point)))
     (erase-buffer)
-    (insert (format "%-20s %15s\n" "Table Name" "Number of Rows"))
+    (let ((header (format "%-20s %15s\n" "Table Name" "Number of Rows")))
+      (insert (propertize header 'face 'duckdb-browse-header)))
     (insert (make-string 36 ?-) "\n")
     (let ((tables (duckdb--get-tables-with-counts duckdb-current-connection)))
       (dolist (table-info tables)
@@ -116,6 +128,7 @@ Optional PARAMS are bound to the query."
           (insert (format "%-20s %15s\n" name count))
           (add-text-properties start (1- (point)) 
                                `(duckdb-table-name ,name 
+                                 face duckdb-browse-table-name
                                  mouse-face highlight 
                                  help-echo "RET to toggle rows")))))
     (setq duckdb--expanded-table nil)

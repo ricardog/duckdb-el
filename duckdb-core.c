@@ -407,6 +407,22 @@ convert_row_to_list(emacs_env *env, duckdb_result *result, idx_t row, emacs_valu
       case DUCKDB_TYPE_DOUBLE:
         val = env->make_float(env, duckdb_value_double(result, col, row));
         break;
+      case DUCKDB_TYPE_TIMESTAMP:
+      {
+        char *str = duckdb_value_varchar(result, col, row);
+        if (str) {
+          val = env->make_string(env, str, strlen(str));
+          duckdb_free(str);
+        }
+        break;
+      }
+      case DUCKDB_TYPE_BLOB:
+      {
+        duckdb_blob blob = duckdb_value_blob(result, col, row);
+        val = env->make_string(env, blob.data, blob.size);
+        duckdb_free(blob.data);
+        break;
+      }
       case DUCKDB_TYPE_VARCHAR:
       {
         char *str = duckdb_value_varchar(result, col, row);
@@ -657,6 +673,16 @@ Fduckdb_select_columns(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void
           val = env->make_float(env, d[r]);
           break;
         }
+        case DUCKDB_TYPE_TIMESTAMP: {
+          /* Use duckdb_value_varchar for simplicity for now as timestamps are complex */
+          char *str = duckdb_value_varchar(&result, c, global_row_idx + r);
+          if (str) {
+            val = env->make_string(env, str, strlen(str));
+            duckdb_free(str);
+          }
+          break;
+        }
+        case DUCKDB_TYPE_BLOB:
         case DUCKDB_TYPE_VARCHAR: {
           duckdb_string_t *d = (duckdb_string_t *)data_ptr;
           val = env->make_string(env, duckdb_string_t_data(&d[r]), duckdb_string_t_length(d[r]));
