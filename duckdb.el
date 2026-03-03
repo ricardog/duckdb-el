@@ -201,11 +201,12 @@ Optional PARAMS are bound to the query."
       "  (No columns)\n"
     (let* ((widths (mapcar #'string-width columns))
            (val-to-string (lambda (v)
-                            (cond
-                             ((null v) "NULL")
-                             ((and (stringp v) (not (multibyte-string-p v)))
-                              (prin1-to-string v))
-                             (t (format "%s" v)))))
+                            (let ((s (cond
+                                      ((null v) "NULL")
+                                      ((and (stringp v) (not (multibyte-string-p v)))
+                                       (prin1-to-string v))
+                                      (t (format "%s" v)))))
+                              (replace-regexp-in-string "\n" " " s))))
            (pad (lambda (s w)
                   (let ((sw (string-width s)))
                     (if (>= sw w) s
@@ -333,7 +334,11 @@ Optional PARAMS are bound to the query."
         (erase-buffer)
         (if (and (fboundp 'vtable-insert) (featurep 'vtable))
             (vtable-insert :columns columns
-                           :objects rows
+                           :objects (mapcar (lambda (row)
+                                              (mapcar (lambda (val)
+                                                        (replace-regexp-in-string "\n" " " (format "%s" val)))
+                                                      row))
+                                            rows)
                            :separator " | ")
           ;; Fallback to tabulated-list-mode
           (duckdb-edit-mode)
@@ -342,7 +347,9 @@ Optional PARAMS are bound to the query."
           (setq tabulated-list-entries
                 (cl-loop for row in rows
                          for i from 0
-                         collect (list i (vconcat (mapcar (lambda (val) (format "%s" val)) row)))))
+                         collect (list i (vconcat (mapcar (lambda (val)
+                                                           (replace-regexp-in-string "\n" " " (format "%s" val)))
+                                                         row)))))
           (tabulated-list-print t))))
     (display-buffer buf)))
 

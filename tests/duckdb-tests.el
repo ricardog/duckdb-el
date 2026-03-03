@@ -262,6 +262,14 @@
         (should (equal (aref val 2) #x07))
         (should (equal (aref val 3) #x83))))))
 
+(ert-deftest duckdb-browse-format-preview-newline-test ()
+  "Test duckdb--format-preview-data with newlines in data."
+  (let* ((columns '("id" "desc"))
+         (rows '((1 "Line 1\nLine 2")))
+         (formatted (duckdb--format-preview-data columns rows)))
+    (should (string-match "Line 1 Line 2" formatted))
+    (should (not (string-match "\n.*Line 2" (substring formatted (string-match "Line 1" formatted)))))))
+
 (ert-deftest duckdb-mode-open-file-test ()
   "Test duckdb-mode-open-file."
   (let ((buf (duckdb-mode-open-file ":memory:")))
