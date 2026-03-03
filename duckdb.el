@@ -128,7 +128,12 @@ Optional PARAMS are bound to the query."
   (let ((tables (duckdb-select conn "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'")))
     (mapcar (lambda (row)
               (let* ((table (car row))
-                     (count-res (duckdb-select conn (format "SELECT count(*) FROM %s" table))))
+                     (columns (duckdb-get-columns conn table))
+                     (col (car columns))
+                     (count-sql (if col
+                                    (format "SELECT count(%s) FROM %s" col table)
+                                  (format "SELECT count(*) FROM %s" table)))
+                     (count-res (duckdb-select conn count-sql)))
                 (list table (caar count-res))))
             tables)))
 
