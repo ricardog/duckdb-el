@@ -25,6 +25,84 @@ extract_string(emacs_env *env, emacs_value value)
   return buffer;
 }
 
+static char *
+base64_encode(const unsigned char *data, size_t input_length, size_t *output_length)
+{
+  static const char encoding_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  *output_length = 4 * ((input_length + 2) / 3);
+  char *encoded_data = malloc(*output_length + 1);
+  if (!encoded_data) return NULL;
+
+  for (size_t i = 0, j = 0; i < input_length;) {
+    uint32_t octet_a = i < input_length ? data[i++] : 0;
+    uint32_t octet_b = i < input_length ? data[i++] : 0;
+    uint32_t octet_c = i < input_length ? data[i++] : 0;
+
+    uint32_t triple = (octet_a << 16) + (octet_b << 8) + octet_c;
+
+    encoded_data[j++] = encoding_table[(triple >> 18) & 0x3F];
+    encoded_data[j++] = encoding_table[(triple >> 12) & 0x3F];
+    encoded_data[j++] = encoding_table[(triple >> 6) & 0x3F];
+    encoded_data[j++] = encoding_table[triple & 0x3F];
+  }
+
+  static const int mod_table[] = {0, 2, 1};
+  for (int i = 0; i < mod_table[input_length % 3]; i++)
+    encoded_data[*output_length - 1 - i] = '=';
+  encoded_data[*output_length] = '\0';
+  return encoded_data;
+}
+
+static unsigned char *
+base64_decode(const char *data, size_t input_length, size_t *output_length)
+{
+  static unsigned char decoding_table[256];
+  static int table_built = 0;
+  if (!table_built) {
+    memset(decoding_table, 0x80, 256);
+    for (int i = 0; i < 64; i++) decoding_table[(unsigned char)"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"[i]] = i;
+    decoding_table['='] = 0;
+    table_built = 1;
+  }
+
+  if (input_length % 4 != 0) return NULL;
+  *output_length = input_length / 4 * 3;
+  if (input_length > 0 && data[input_length - 1] == '=') (*output_length)--;
+  if (input_length > 1 && data[input_length - 2] == '=') (*output_length)--;
+
+  unsigned char *decoded_data = malloc(*output_length);
+  if (!decoded_data) return NULL;
+
+  for (size_t i = 0, j = 0; i < input_length;) {
+    uint32_t a = decoding_table[(unsigned char)data[i++]];
+    uint32_t b = decoding_table[(unsigned char)data[i++]];
+    uint32_t c = decoding_table[(unsigned char)data[i++]];
+    uint32_t d = decoding_table[(unsigned char)data[i++]];
+
+    uint32_t triple = (a << 18) + (b << 12) + (c << 6) + d;
+
+    if (j < *output_length) decoded_data[j++] = (triple >> 16) & 0xFF;
+    if (j < *output_length) decoded_data[j++] = (triple >> 8) & 0xFF;
+    if (j < *output_length) decoded_data[j++] = triple & 0xFF;
+  }
+  return decoded_data;
+}
+
+static emacs_value
+make_blob_value(emacs_env *env, const char *data, ptrdiff_t length)
+{
+  if (!data) return env->intern(env, "nil");
+  size_t out_len;
+  char *b64 = base64_encode((const unsigned char *)data, length, &out_len);
+  if (!b64) return env->intern(env, "nil");
+
+  emacs_value b64_str = env->make_string(env, b64, out_len);
+  free(b64);
+
+  emacs_value decode_func = env->intern(env, "base64-decode-string");
+  return env->funcall(env, decode_func, 1, &b64_str);
+}
+
 /* Finalizer for duckdb_database */
 static void
 db_finalizer(void *data)
@@ -269,6 +347,42 @@ bind_parameters(emacs_env *env, duckdb_prepared_statement stmt, emacs_value para
       state = duckdb_bind_varchar(stmt, i, str);
       free(str);
     }
+    else if (env->eq(env, type, env->intern(env, "cons")))
+    {
+      emacs_value car = env->funcall(env, car_sym, 1, &val);
+      if (env->eq(env, car, env->intern(env, ":blob")))
+      {
+        emacs_value b64_val = env->funcall(env, env->intern(env, "cadr"), 1, &val);
+        char *b64_str = extract_string(env, b64_val);
+        if (b64_str)
+        {
+          size_t out_len;
+          unsigned char *decoded = base64_decode(b64_str, strlen(b64_str), &out_len);
+          if (decoded)
+          {
+            state = duckdb_bind_blob(stmt, i, decoded, out_len);
+            free(decoded);
+          }
+          else
+          {
+            SIGNAL_ERROR(env, "duckdb-error", "Failed to decode base64 blob");
+            free(b64_str);
+            return false;
+          }
+          free(b64_str);
+        }
+        else
+        {
+          SIGNAL_ERROR(env, "duckdb-error", "Invalid blob data");
+          return false;
+        }
+      }
+      else
+      {
+        SIGNAL_ERROR(env, "duckdb-error", "Unsupported parameter type (cons)");
+        return false;
+      }
+    }
     else if (env->eq(env, val, env->intern(env, "t")))
     {
       state = duckdb_bind_boolean(stmt, i, true);
@@ -416,8 +530,10 @@ convert_row_to_list(emacs_env *env, duckdb_result *result, idx_t row, emacs_valu
       case DUCKDB_TYPE_BLOB:
       {
         duckdb_blob blob = duckdb_value_blob(result, col, row);
-        val = env->make_string(env, blob.data, blob.size);
-        duckdb_free(blob.data);
+        if (blob.data) {
+          val = make_blob_value(env, (const char *)blob.data, blob.size);
+          duckdb_free(blob.data);
+        }
         break;
       }
       case DUCKDB_TYPE_VARCHAR:
@@ -425,6 +541,10 @@ convert_row_to_list(emacs_env *env, duckdb_result *result, idx_t row, emacs_valu
         char *str = duckdb_value_varchar(result, col, row);
         if (str) {
           val = env->make_string(env, str, strlen(str));
+          if (env->non_local_exit_check(env) != emacs_funcall_exit_return) {
+            env->non_local_exit_clear(env);
+            val = make_blob_value(env, str, strlen(str));
+          }
           duckdb_free(str);
         }
         break;
@@ -675,10 +795,18 @@ Fduckdb_select_columns(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void
           val = env->make_integer(env, d[r].micros);
           break;
         }
-        case DUCKDB_TYPE_BLOB:
+        case DUCKDB_TYPE_BLOB: {
+          duckdb_string_t *d = (duckdb_string_t *)data_ptr;
+          val = make_blob_value(env, duckdb_string_t_data(&d[r]), duckdb_string_t_length(d[r]));
+          break;
+        }
         case DUCKDB_TYPE_VARCHAR: {
           duckdb_string_t *d = (duckdb_string_t *)data_ptr;
           val = env->make_string(env, duckdb_string_t_data(&d[r]), duckdb_string_t_length(d[r]));
+          if (env->non_local_exit_check(env) != emacs_funcall_exit_return) {
+            env->non_local_exit_clear(env);
+            val = make_blob_value(env, duckdb_string_t_data(&d[r]), duckdb_string_t_length(d[r]));
+          }
           break;
         }
         default:

@@ -199,18 +199,42 @@ Optional PARAMS are bound to the query."
   "Format COLUMNS and ROWS for preview display."
   (if (null columns)
       "  (No columns)\n"
-    (let* ((widths (mapcar #'length columns))
+    (let* ((widths (mapcar #'string-width columns))
+           (val-to-string (lambda (v)
+                            (cond
+                             ((null v) "NULL")
+                             ((and (stringp v) (not (multibyte-string-p v)))
+                              (prin1-to-string v))
+                             (t (format "%s" v)))))
+           (pad (lambda (s w)
+                  (let ((sw (string-width s)))
+                    (if (>= sw w) s
+                      (concat s (make-string (- w sw) ?\s))))))
            (widths (cl-loop for row in rows
                             do (setq widths (cl-loop for val in row
                                                      for w in widths
-                                                     collect (max w (length (format "%s" val)))))
+                                                     collect (max w (string-width (funcall val-to-string val)))))
                             finally return widths))
-           (fmt (concat "  " (mapconcat (lambda (w) (format "%%-%ds" w)) widths "  ") "\n"))
            (out ""))
-      (setq out (concat out (propertize (apply #'format fmt columns) 'face 'duckdb-browse-header)))
+      ;; Header
+      (setq out (concat out "  "))
+      (cl-loop for col in columns
+               for w in widths
+               do (setq out (concat out (propertize (funcall pad col w) 'face 'duckdb-browse-header) "  ")))
+      (setq out (concat out "\n"))
+      ;; Rows
       (dolist (row rows)
-        (setq out (concat out (apply #'format fmt (mapcar (lambda (v) (format "%s" v)) row)))))
+        (setq out (concat out "  "))
+        (cl-loop for val in row
+                 for w in widths
+                 do (let ((s (funcall val-to-string val)))
+                      (setq out (concat out (funcall pad s w) "  "))))
+        (setq out (concat out "\n")))
       out)))
+
+(defun duckdb-blob (data)
+  "Create a BLOB parameter from DATA (a unibyte string)."
+  (list :blob (base64-encode-string data t)))
 
 (defun duckdb-set-connection (path)
   "Set the current DuckDB connection for the buffer to PATH."
