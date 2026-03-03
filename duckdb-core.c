@@ -409,11 +409,8 @@ convert_row_to_list(emacs_env *env, duckdb_result *result, idx_t row, emacs_valu
         break;
       case DUCKDB_TYPE_TIMESTAMP:
       {
-        char *str = duckdb_value_varchar(result, col, row);
-        if (str) {
-          val = env->make_string(env, str, strlen(str));
-          duckdb_free(str);
-        }
+        duckdb_timestamp ts = duckdb_value_timestamp(result, col, row);
+        val = env->make_integer(env, ts.micros);
         break;
       }
       case DUCKDB_TYPE_BLOB:
@@ -674,12 +671,8 @@ Fduckdb_select_columns(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void
           break;
         }
         case DUCKDB_TYPE_TIMESTAMP: {
-          /* Use duckdb_value_varchar for simplicity for now as timestamps are complex */
-          char *str = duckdb_value_varchar(&result, c, global_row_idx + r);
-          if (str) {
-            val = env->make_string(env, str, strlen(str));
-            duckdb_free(str);
-          }
+          duckdb_timestamp *d = (duckdb_timestamp *)data_ptr;
+          val = env->make_integer(env, d[r].micros);
           break;
         }
         case DUCKDB_TYPE_BLOB:

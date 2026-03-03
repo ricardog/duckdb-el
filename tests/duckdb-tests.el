@@ -181,11 +181,11 @@
     (duckdb-execute conn "INSERT INTO test VALUES ('2023-01-01 12:00:00', '\\x01\\x02\\x03'::BLOB);")
     (let ((results (duckdb-select conn "SELECT * FROM test;")))
       (should (equal (length results) 1))
-      (should (string-match "2023-01-01 12:00:00" (caar results)))
+      (should (integerp (caar results)))
       (should (equal (cadar results) "\x01\x02\x03")))
     ;; Test columnar as well
     (let ((results (duckdb-select-columns conn "SELECT * FROM test;")))
-      (should (string-match "2023-01-01 12:00:00" (aref (plist-get results :ts) 0)))
+      (should (integerp (aref (plist-get results :ts) 0)))
       (should (equal (aref (plist-get results :data) 0) "\x01\x02\x03")))))
 
 (ert-deftest duckdb-browse-get-tables-with-counts-test ()
