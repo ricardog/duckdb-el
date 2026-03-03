@@ -17,12 +17,12 @@
 (define-error 'duckdb-error "DuckDB error" 'error)
 
 (defface duckdb-browse-header
-  '((t :inherit header-line :background "grey90" :weight bold))
+  '((t :inherit header-line :background "grey10" :foreground "white" :weight bold))
   "Face for the header in DuckDB browse buffer."
   :group 'duckdb)
 
 (defface duckdb-browse-table-name
-  '((t :inherit default :background "grey95" :weight bold))
+  '((t :inherit default :weight bold))
   "Face for table names in DuckDB browse buffer."
   :group 'duckdb)
 
@@ -207,7 +207,7 @@ Optional PARAMS are bound to the query."
                             finally return widths))
            (fmt (concat "  " (mapconcat (lambda (w) (format "%%-%ds" w)) widths "  ") "\n"))
            (out ""))
-      (setq out (concat out (apply #'format fmt columns)))
+      (setq out (concat out (propertize (apply #'format fmt columns) 'face 'duckdb-browse-header)))
       (dolist (row rows)
         (setq out (concat out (apply #'format fmt (mapcar (lambda (v) (format "%s" v)) row)))))
       out)))
