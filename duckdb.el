@@ -94,10 +94,6 @@ Optional PARAMS are bound to the query."
 (defvar duckdb-path-history nil
   "History of DuckDB database paths.")
 
-(defun duckdb--read-path ()
-  "Read a DuckDB path with file completion, defaulting to :memory:."
-  (read-file-name "DuckDB Path: " nil ":memory:" nil ":memory:" 'duckdb-path-history))
-
 (defun duckdb-browse-cleanup ()
   "Cleanup connection when buffer is killed."
   (when duckdb-current-connection
@@ -253,7 +249,7 @@ Optional PARAMS are bound to the query."
 
 (defun duckdb-set-connection (path)
   "Set the current DuckDB connection for the buffer to PATH."
-  (interactive (list (duckdb--read-path)))
+  (interactive (list (read-string "DuckDB Path: " ":memory:" 'duckdb-path-history ":memory:")))
   (let* ((db (duckdb-open path))
          (conn (duckdb-connect db)))
     (setq-local duckdb-current-connection conn)
@@ -281,7 +277,7 @@ Optional PARAMS are bound to the query."
 
 (defun duckdb-mode-open-file (path)
   "Open DuckDB database at PATH and browse its tables."
-  (interactive (list (duckdb--read-path)))
+  (interactive (list (read-string "DuckDB Path: " ":memory:" 'duckdb-path-history ":memory:")))
   (let* ((db (duckdb-open path))
          (conn (duckdb-connect db))
          (buf (get-buffer-create (format "*DuckDB: %s*" path))))
@@ -307,7 +303,7 @@ Optional PARAMS are bound to the query."
 (defun duckdb--get-db-or-path ()
   "Get the current connection or prompt for a path."
   (or duckdb-current-connection
-      (duckdb--read-path)))
+      (read-string "DuckDB Path: " ":memory:" 'duckdb-path-history ":memory:")))
 
 (defun duckdb-get-tables (conn-ptr)
   "Return a list of all table names in the current database for CONN-PTR."
