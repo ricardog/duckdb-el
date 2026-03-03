@@ -137,8 +137,8 @@ Optional PARAMS are bound to the query."
     (if (< (point) (point-min)) (goto-char (point-min)))))
 
 (defun duckdb--get-tables-with-counts (conn)
-  "Get all tables in CONN and their row counts."
-  (let ((tables (duckdb-select conn "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'")))
+  "Get all tables in CONN and their row counts, sorted by name."
+  (let ((tables (duckdb-select conn "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' ORDER BY table_name")))
     (mapcar (lambda (row)
               (let* ((table (car row))
                      (columns (duckdb-get-columns conn table))

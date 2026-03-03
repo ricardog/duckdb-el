@@ -220,8 +220,18 @@
     
     (let ((tables (duckdb--get-tables-with-counts conn)))
       (should (equal (length tables) 2))
-      (should (member '("t1" 3) tables))
-      (should (member '("t2" 1) tables)))))
+      (should (equal (nth 0 tables) '("t1" 3)))
+      (should (equal (nth 1 tables) '("t2" 1))))))
+
+(ert-deftest duckdb-browse-tables-sorting-test ()
+  "Test that tables are sorted by name in DuckDB Browse mode."
+  (with-duckdb conn ":memory:"
+    (duckdb-execute conn "CREATE TABLE zzz (id int)")
+    (duckdb-execute conn "CREATE TABLE aaa (id int)")
+    (duckdb-execute conn "CREATE TABLE mmm (id int)")
+    
+    (let ((tables (duckdb--get-tables-with-counts conn)))
+      (should (equal (mapcar #'car tables) '("aaa" "mmm" "zzz"))))))
 
 (ert-deftest duckdb-browse-get-table-preview-test ()
   "Test duckdb--get-table-preview."
