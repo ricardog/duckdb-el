@@ -32,7 +32,7 @@ emacs-duckdb/
 
 * **Naming:** Prefix all internal C functions with `duckdb_` and Lisp-exposed functions with `Fduckdb_`.
 * **GPL:** Every module must include `int plugin_is_GPL_compatible;`.
-* **Error Handling:** Never use `exit()`. Use `env->non_local_exit_signal` to pass errors back to Elisp.
+* **Error Handling:** Never use `exit()`. Use `env->non_local_exit_signal` to pass errors back to Elisp. Use the `SIGNAL_ERROR` macro from `duckdb-api.h`.
 * **Memory:** Every `duckdb_database`, `duckdb_connection`, and `duckdb_result` must be wrapped in a `user_ptr` with a custom finalizer.
 * **Type Safety:** Explicitly check types of `emacs_value` arguments using `env->type_of` before processing.
 
@@ -43,23 +43,25 @@ emacs-duckdb/
 * **Dependencies:** Use `(require 'cl-lib)` for modern list/struct manipulation.
 * **Safety:** Use `unwind-protect` in macros to ensure resources are freed if Lisp code signals an error.
 
-## 4. Implementation Strategy
+## 4. Key Implementation Details (For Future Agents)
 
-### Phase 1: The "Thin" Layer
+### 4.1 Asynchronous Query Mechanism
+* **C-side:** `duckdb-select-async` spawns a `pthread` worker. Upon completion, the worker uses `kill(getpid(), SIGUSR1)` to notify Emacs.
+* **Elisp-side:** `duckdb.el` binds `SIGUSR1` in `special-event-map` to `duckdb--handle-sigusr1`. This handler calls `duckdb-async-poll` (C) which executes the callback with query results.
+* **Note:** The `async_ctx` struct must be carefully managed with `make_global_ref` for callbacks and `user_ptr` finalizers for cleanup.
 
-Implement `duckdb-open`, `duckdb-connect`, and a basic `duckdb-execute`. Focus on getting a `:memory:` database working and returning a simple confirmation string.
+### 4.2 Columnar Result Format
+* `duckdb-select-columns` returns a plist: `(:data (:col1 [v1 v2 ...] :col2 [v3 v4 ...]) :types (:col1 "VARCHAR" :col2 "INTEGER"))`.
+* Data columns are Emacs vectors (`[v1 v2 ...]`). This format is optimized for `vtable` and large dataset processing.
 
-### Phase 2: Data Marshalling
+### 4.3 Type Marshalling & BLOBs
+* **TIMESTAMP:** Represented as an integer of microseconds.
+* **BLOBs:** Transferred via base64 encoding/decoding during the C/Elisp bridge to handle binary safety. Use `(duckdb-blob unibyte-string)` for parameters.
+* **VARCHAR:** If `make_string` fails (invalid UTF-8), it falls back to a blob-like transfer to prevent module crashes.
 
-Implement the logic to convert `duckdb_result` into Elisp lists. Handle mapping for:
-
-* `DUCKDB_TYPE_BIGINT` -> `make_integer`
-* `DUCKDB_TYPE_VARCHAR` -> `make_string`
-* `DUCKDB_TYPE_DOUBLE` -> `make_float`
-
-### Phase 3: Columnar Optimization
-
-Implement `duckdb-select-columns`. This should bypass row-by-row iteration and use DuckDB's native chunks to populate Elisp vectors for significant performance gains in `vtable`.
+### 4.4 Parameter Binding
+* Parameters are passed as a list: `(duckdb-execute conn "SELECT ?" '(1))`.
+* Special handling for NULLs: Uses the configurable `duckdb-null-symbol` (defaults to `nil`).
 
 ## 5. Testing Strategy
 
@@ -67,26 +69,16 @@ We follow a "Lisp-Driven Testing" approach. Since the C code is an extension of 
 
 * **Framework:** Use **ERT** (Emacs Lisp Regression Test).
 * **Coverage:**
-* **Resource Lifecycle:** Verify that opening/closing databases doesn't leak memory.
-* **Type Fidelity:** Ensure large integers and floats retain precision across the C/Elisp boundary.
-* **Error States:** Pass malformed SQL to C and verify that a Lisp-level `duckdb-error` is signaled.
+  * **Resource Lifecycle:** Verify that opening/closing databases doesn't leak memory.
+  * **Type Fidelity:** Ensure large integers and floats retain precision across the C/Elisp boundary.
+  * **Error States:** Pass malformed SQL to C and verify that a Lisp-level `duckdb-error` is signaled.
+  * **Asynchronous:** Test that callbacks fire and results match the expected row-major format.
 
+* **Address Sanitizer:** Use address sanitizer to ensure there are no memory bugs. Add a target to the Makefile to build a version of the module with address sanitizer and then run the tests. Always run the asan tests before declaring work completed.
 
-* **CI Integration:** The `Makefile` should have a `test` target that runs:
-`emacs -batch -l duckdb.el -l tests/duckdb-tests.el -f ert-run-tests-batch-and-exit`.
+## 6. Development Workflow (Agent Protocol)
 
-* **Address Sanitizer:** Use address sanitizer to ensure there are no
-  memory bugs.  Add a target to the Makefile to build a version of the
-  module with address sanitizer and then run the tests. Always run the
-  asan tests before declaring work completed.
-
-
-## 6. Agent Instructions for New Code
-
-When generating code for this project:
-
-1. Prioritize the use of `make_user_ptr` for any pointer that must persist across Lisp calls.
-2. Ensure `emacs_module_init` performs all necessary `intern` and `fset` operations to register functions.
-3. When writing Elisp, provide `(declare-function ...)` blocks so the byte-compiler is aware of C-defined primitives.
-
-```
+1. **Reproduction:** Before fixing a bug, add a test case to `tests/duckdb-tests.el` that fails.
+2. **Build:** Use `make` or `make asan-test` to compile and verify.
+3. **Verification:** Ensure `make test` passes and that no memory leaks are reported by ASAN.
+4. **Documentation:** Update docstrings in `duckdb.el` and `README.md` if the public API changes.
