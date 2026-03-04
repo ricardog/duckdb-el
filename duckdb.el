@@ -205,6 +205,9 @@ Optional PARAMS are bound to the query."
       (let ((start (point))
             (columns-info (duckdb--get-table-columns-info duckdb-current-connection table-name)))
         (insert "  " (propertize "Columns:" 'face 'duckdb-browse-header) "\n")
+        (insert (format "    %-20s %s\n"
+                        (propertize "Column Name" 'face 'duckdb-browse-header)
+                        (propertize "Data Type" 'face 'duckdb-browse-header)))
         (dolist (info columns-info)
           (insert (format "    %-20s %s\n" (car info) (cadr info))))
         (setq duckdb--expanded-table table-name)
