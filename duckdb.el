@@ -110,6 +110,7 @@ Optional PARAMS are bound to the query."
   (add-hook 'kill-buffer-hook #'duckdb-browse-cleanup nil t))
 
 (define-key duckdb-browse-mode-map (kbd "RET") #'duckdb-browse-toggle-table)
+(define-key duckdb-browse-mode-map (kbd "c") #'duckdb-browse-toggle-columns)
 
 (defun duckdb-browse-refresh (&optional _ignore-auto _noconfirm)
   "Refresh the table list."
@@ -130,7 +131,7 @@ Optional PARAMS are bound to the query."
                                `(duckdb-table-name ,name 
                                  face duckdb-browse-table-name
                                  mouse-face highlight 
-                                 help-echo "RET to toggle rows")))))
+                                 help-echo "RET: toggle data, c: toggle columns")))))
     (setq duckdb--expanded-table nil)
     (setq duckdb--expanded-overlay nil)
     (goto-char (min pos (point-max)))
@@ -151,15 +152,28 @@ Optional PARAMS are bound to the query."
             tables)))
 
 (defun duckdb-browse-toggle-table ()
-  "Toggle the display of the table at point."
+  "Toggle the display of the table at point (data preview)."
   (interactive)
   (let ((table (get-text-property (point) 'duckdb-table-name)))
     (if (not table)
         (message "No table at point")
-      (if (string= table duckdb--expanded-table)
+      (if (and (string= table duckdb--expanded-table)
+               (eq (overlay-get duckdb--expanded-overlay 'duckdb-type) 'data))
           (duckdb--collapse-table)
         (duckdb--collapse-table) ; Collapse existing if any
         (duckdb--expand-table table)))))
+
+(defun duckdb-browse-toggle-columns ()
+  "Toggle the display of columns and types for the table at point."
+  (interactive)
+  (let ((table (get-text-property (point) 'duckdb-table-name)))
+    (if (not table)
+        (message "No table at point")
+      (if (and (string= table duckdb--expanded-table)
+               (eq (overlay-get duckdb--expanded-overlay 'duckdb-type) 'columns))
+          (duckdb--collapse-table)
+        (duckdb--collapse-table)
+        (duckdb--expand-table-columns table)))))
 
 (defun duckdb--collapse-table ()
   "Collapse currently expanded table."
@@ -181,7 +195,25 @@ Optional PARAMS are bound to the query."
         (insert data)
         (setq duckdb--expanded-table table-name)
         (setq duckdb--expanded-overlay (make-overlay start (point)))
-        (overlay-put duckdb--expanded-overlay 'duckdb-expanded t)))))
+        (overlay-put duckdb--expanded-overlay 'duckdb-type 'data)))))
+
+(defun duckdb--expand-table-columns (table-name)
+  "Expand TABLE-NAME with column information."
+  (let ((inhibit-read-only t))
+    (save-excursion
+      (forward-line 1)
+      (let ((start (point))
+            (columns-info (duckdb--get-table-columns-info duckdb-current-connection table-name)))
+        (insert "  " (propertize "Columns:" 'face 'duckdb-browse-header) "\n")
+        (dolist (info columns-info)
+          (insert (format "    %-20s %s\n" (car info) (cadr info))))
+        (setq duckdb--expanded-table table-name)
+        (setq duckdb--expanded-overlay (make-overlay start (point)))
+        (overlay-put duckdb--expanded-overlay 'duckdb-type 'columns)))))
+
+(defun duckdb--get-table-columns-info (conn table)
+  "Return a list of (column_name data_type) for TABLE in CONN."
+  (duckdb-select conn "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = ? ORDER BY ordinal_position" (list table)))
 
 (defun duckdb--format-value (val type)
   "Format VAL based on its DuckDB TYPE."

@@ -306,5 +306,37 @@
           (should (string-match "Table Name" (buffer-string))))
       (kill-buffer buf))))
 
+(ert-deftest duckdb-browse-toggle-columns-test ()
+  "Test duckdb-browse-toggle-columns."
+  (let ((buf (duckdb-mode-open-file ":memory:")))
+    (unwind-protect
+        (with-current-buffer buf
+          (duckdb-execute duckdb-current-connection "CREATE TABLE test (id INTEGER, name VARCHAR);")
+          (duckdb-browse-refresh)
+          ;; Move to the "test" table line
+          (goto-char (point-min))
+          (search-forward "test")
+          (forward-char -1)
+          ;; Toggle columns
+          (duckdb-browse-toggle-columns)
+          (should (string= duckdb--expanded-table "test"))
+          (should (eq (overlay-get duckdb--expanded-overlay 'duckdb-type) 'columns))
+          (should (string-match "Columns:" (buffer-string)))
+          (should (string-match "id" (buffer-string)))
+          (should (string-match "INTEGER" (buffer-string)))
+          ;; Toggle again to collapse
+          (duckdb-browse-toggle-columns)
+          (should-not duckdb--expanded-table)
+          (should-not duckdb--expanded-overlay)
+          ;; Toggle data
+          (duckdb-browse-toggle-table)
+          (should (string= duckdb--expanded-table "test"))
+          (should (eq (overlay-get duckdb--expanded-overlay 'duckdb-type) 'data))
+          ;; Toggle columns while data is shown
+          (duckdb-browse-toggle-columns)
+          (should (string= duckdb--expanded-table "test"))
+          (should (eq (overlay-get duckdb--expanded-overlay 'duckdb-type) 'columns)))
+      (kill-buffer buf))))
+
 (provide 'duckdb-tests)
 ;;; duckdb-tests.el ends here
