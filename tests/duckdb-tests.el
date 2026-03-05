@@ -361,5 +361,21 @@
           (should (eq (overlay-get duckdb--expanded-overlay 'duckdb-type) 'columns)))
       (kill-buffer buf))))
 
+(ert-deftest duckdb-insert-iris-test ()
+  "Test inserting iris.csv into a table and querying it."
+  (let ((iris-file (expand-file-name "iris.csv" (or (and load-file-name (file-name-directory load-file-name))
+                                                   (and buffer-file-name (file-name-directory buffer-file-name))
+                                                   default-directory))))
+    (with-duckdb conn ":memory:"
+      (let ((buf (find-file-noselect iris-file)))
+        (unwind-protect
+            (duckdb-insert-buffer conn "iris" buf)
+          (kill-buffer buf)))
+      (let ((results (duckdb-select conn "SELECT count(*), avg(sepal_length) FROM iris;")))
+        (should (equal (caar results) 150))
+        (should (floatp (cadar results)))
+        (should (> (cadar results) 5.8))
+        (should (< (cadar results) 5.9))))))
+
 (provide 'duckdb-tests)
 ;;; duckdb-tests.el ends here

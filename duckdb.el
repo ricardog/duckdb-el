@@ -436,20 +436,26 @@ DB-OR-PATH can be a connection pointer or a string path."
 (defun duckdb-insert-buffer (db-or-path table-name &optional buffer)
   "Insert the contents of BUFFER into TABLE-NAME in DuckDB via DB-OR-PATH.
 DB-OR-PATH can be a connection pointer or a string path.
-If BUFFER is nil, use the current buffer."
+If BUFFER is nil, use the current buffer.
+If the table does not exist, it will be created automatically using read_csv_auto."
   (interactive (list (duckdb--get-db-or-path) (read-string "Table name: ")))
   (let* ((buf (or buffer (current-buffer)))
          (file (buffer-file-name buf)))
     (cl-flet ((do-insert (conn)
-                (if file
-                    (duckdb-execute conn (format "COPY %s FROM '%s' (AUTO_DETECT TRUE)" table-name file))
-                  ;; If not a file, write to a temp file
-                  (let ((temp-file (make-temp-file "duckdb-insert-")))
-                    (with-current-buffer buf
-                      (write-region (point-min) (point-max) temp-file))
-                    (unwind-protect
-                        (duckdb-execute conn (format "COPY %s FROM '%s' (AUTO_DETECT TRUE)" table-name temp-file))
-                      (delete-file temp-file))))))
+                (let ((exists (member table-name (duckdb-get-tables conn))))
+                  (if file
+                      (if exists
+                          (duckdb-execute conn (format "COPY %s FROM '%s' (AUTO_DETECT TRUE)" table-name file))
+                        (duckdb-execute conn (format "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s')" table-name file)))
+                    ;; If not a file, write to a temp file
+                    (let ((temp-file (make-temp-file "duckdb-insert-")))
+                      (with-current-buffer buf
+                        (write-region (point-min) (point-max) temp-file))
+                      (unwind-protect
+                          (if exists
+                              (duckdb-execute conn (format "COPY %s FROM '%s' (AUTO_DETECT TRUE)" table-name temp-file))
+                            (duckdb-execute conn (format "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s')" table-name temp-file)))
+                        (delete-file temp-file)))))))
       (if (stringp db-or-path)
           (with-duckdb conn db-or-path (do-insert conn))
         (do-insert db-or-path)))))
