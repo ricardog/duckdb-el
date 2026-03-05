@@ -7,6 +7,14 @@
 #include "duckdb-api.h"
 #include "base64_simd.h"
 
+#ifndef EMACS_MODULE_API_VERSION
+#ifdef EMACS_MAJOR_VERSION
+#define EMACS_MODULE_API_VERSION EMACS_MAJOR_VERSION
+#else
+#define EMACS_MODULE_API_VERSION 25
+#endif
+#endif
+
 int plugin_is_GPL_compatible;
 
 /* Helper to convert emacs_value to a C string */
@@ -1119,6 +1127,7 @@ Fduckdb_base64_decode(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void 
   (void)nargs;
   (void)data;
   
+#if EMACS_MODULE_API_VERSION >= 28
   ptrdiff_t len = 0;
   if (!env->copy_string_contents(env, args[0], NULL, &len)) return env->intern(env, "nil");
   
@@ -1141,6 +1150,12 @@ Fduckdb_base64_decode(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void 
   free(buf);
   free(out);
   return res;
+#else
+  /* Fallback: we cannot easily create a unibyte string from raw bytes in C for older Emacs.
+     We just use the built-in base64-decode-string function. */
+  emacs_value decode_func = env->intern(env, "base64-decode-string");
+  return env->funcall(env, decode_func, 1, &args[0]);
+#endif
 }
 
 /* Module initialization */

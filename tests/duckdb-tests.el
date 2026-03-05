@@ -295,6 +295,20 @@
          (formatted (duckdb--format-preview-data columns rows)))
     (should (string-match "Line 1 Line 2" formatted))))
 
+(ert-deftest duckdb-base64-test ()
+  "Test duckdb-base64-encode and duckdb-base64-decode."
+  (let* ((original "Hello, DuckDB!")
+         (encoded (duckdb-base64-encode original))
+         (decoded (duckdb-base64-decode encoded)))
+    (should (string= encoded "SGVsbG8sIER1Y2tEQiE="))
+    (should (string= decoded original)))
+  ;; Test with binary data
+  (let* ((binary (unibyte-string #x00 #xFF #x07 #x83))
+         (encoded (duckdb-base64-encode binary))
+         (decoded (duckdb-base64-decode encoded)))
+    (should (string= encoded "AP8Hgw=="))
+    (should (equal decoded binary))))
+
 (ert-deftest duckdb-mode-open-file-test ()
   "Test duckdb-mode-open-file."
   (let ((buf (duckdb-mode-open-file ":memory:")))
