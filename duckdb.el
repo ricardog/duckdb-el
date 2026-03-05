@@ -38,6 +38,8 @@
 (declare-function duckdb-step "duckdb-core.so" (stmt-ptr))
 (declare-function duckdb--select-async "duckdb-core.so" (conn-ptr sql callback &optional params))
 (declare-function duckdb-async-poll "duckdb-core.so" (ctx))
+(declare-function duckdb-base64-encode "duckdb-core.so" (string))
+(declare-function duckdb-base64-decode "duckdb-core.so" (string))
 
 (defvar duckdb--async-queries nil
   "List of active asynchronous query contexts.")
@@ -227,7 +229,9 @@ Optional PARAMS are bound to the query."
           (micros (% val 1000000)))
       (format-time-string "%Y-%m-%d %H:%M:%S" (seconds-to-time secs))))
    ((and (stringp val) (not (multibyte-string-p val)))
-    (replace-regexp-in-string "\n" " " (prin1-to-string val)))
+    (if (> (length val) 1000)
+        (format "<BLOB %d bytes>" (length val))
+      (replace-regexp-in-string "\n" " " (prin1-to-string val))))
    (t (replace-regexp-in-string "\n" " " (format "%s" val)))))
 
 (defun duckdb--get-table-preview (conn table)
@@ -280,7 +284,7 @@ Optional PARAMS are bound to the query."
 
 (defun duckdb-blob (data)
   "Create a BLOB parameter from DATA (a unibyte string)."
-  (list :blob (base64-encode-string data t)))
+  (list :blob data))
 
 (defun duckdb-set-connection (path)
   "Set the current DuckDB connection for the buffer to PATH."

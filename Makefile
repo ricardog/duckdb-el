@@ -18,11 +18,24 @@ MODULE  = duckdb-core.so
 
 all: $(MODULE)
 
-$(MODULE): duckdb-core.o
+$(MODULE): duckdb-core.o base64_simd.o
 	$(CC) -shared -o $@ $^ $(LDFLAGS)
 
-duckdb-core.o: duckdb-core.c duckdb-api.h
+duckdb-core.o: duckdb-core.c duckdb-api.h base64_simd.h
 	$(CC) $(CFLAGS) -c $<
+
+UNAME_M := $(shell uname -m)
+
+ifeq ($(UNAME_M), x86_64)
+    SIMD_FLAGS = -mavx2
+else ifeq ($(UNAME_M), aarch64)
+    SIMD_FLAGS = -march=armv8-a+simd
+else ifeq ($(UNAME_M), arm64)
+    SIMD_FLAGS = -march=armv8-a+simd
+endif
+
+base64_simd.o: base64_simd.c base64_simd.h
+	$(CC) $(CFLAGS) $(SIMD_FLAGS) -c $<
 
 clean:
 	$(RM) *.o $(MODULE)
