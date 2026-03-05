@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -1158,10 +1159,31 @@ Fduckdb_base64_decode(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void 
 #endif
 }
 
+int
+check_emacs_version(struct emacs_runtime *ert)
+{
+  assert (ert->size > 0);
+  if ((size_t) ert->size < sizeof *ert)
+    /* Dynamic size is smaller than static size. */
+    return 1;
+  emacs_env *env = ert->get_environment (ert);
+  assert (env->size > 0);
+  if ((size_t) env->size < sizeof *env)
+    /* Dynamic size is smaller than static size. */
+    return 2;
+  /* Continue initialization. */
+  return 0;
+}
+
+
 /* Module initialization */
 int
 emacs_module_init(struct emacs_runtime *ert)
 {
+  int check = check_emacs_version(ert);
+  if (check)
+    return check;
+
   emacs_env *env = ert->get_environment(ert);
 
   /* Define the duckdb-error symbol */
