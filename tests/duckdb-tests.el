@@ -363,19 +363,51 @@
 
 (ert-deftest duckdb-insert-iris-test ()
   "Test inserting iris.csv into a table and querying it."
+  (let* ((iris-file (expand-file-name "iris.csv" (or (and load-file-name (file-name-directory load-file-name))
+                                                    (and buffer-file-name (file-name-directory buffer-file-name))
+                                                    default-directory)))
+         (buf (find-file-noselect iris-file))
+         (conn (duckdb-insert-buffer ":memory:" "iris" buf)))
+    (unwind-protect
+        (let ((results (duckdb-select conn "SELECT count(*), avg(sepal_length) FROM iris;")))
+          (should (equal (caar results) 150))
+          (should (floatp (cadar results)))
+          (should (> (cadar results) 5.8))
+          (should (< (cadar results) 5.9)))
+      (duckdb-disconnect conn)
+      (kill-buffer buf))))
+
+(ert-deftest duckdb-insert-buffer-return-conn-test ()
+  "Test that duckdb-insert-buffer returns a connection when called non-interactively."
   (let ((iris-file (expand-file-name "iris.csv" (or (and load-file-name (file-name-directory load-file-name))
                                                    (and buffer-file-name (file-name-directory buffer-file-name))
                                                    default-directory))))
-    (with-duckdb conn ":memory:"
+    (let ((conn (duckdb-insert-buffer ":memory:" "iris_auto" (find-file-noselect iris-file))))
+      (should (user-ptrp conn))
+      (let ((results (duckdb-select conn "SELECT count(*) FROM iris_auto;")))
+        (should (equal (caar results) 150)))
+      (duckdb-disconnect conn))))
+
+(ert-deftest duckdb-insert-buffer-interactive-test ()
+  "Test interactive duckdb-insert-buffer (mocked pop-to-buffer and input)."
+  (let ((iris-file (expand-file-name "iris.csv" (or (and load-file-name (file-name-directory load-file-name))
+                                                   (and buffer-file-name (file-name-directory buffer-file-name))
+                                                   default-directory)))
+        (popped-buffer nil))
+    (cl-letf (((symbol-function 'pop-to-buffer) (lambda (buf &rest _) (setq popped-buffer buf)))
+              ((symbol-function 'read-string) (lambda (&rest _) "iris"))
+              ((symbol-function 'duckdb--get-db-or-path) (lambda () ":memory:")))
       (let ((buf (find-file-noselect iris-file)))
-        (unwind-protect
-            (duckdb-insert-buffer conn "iris" buf)
-          (kill-buffer buf)))
-      (let ((results (duckdb-select conn "SELECT count(*), avg(sepal_length) FROM iris;")))
-        (should (equal (caar results) 150))
-        (should (floatp (cadar results)))
-        (should (> (cadar results) 5.8))
-        (should (< (cadar results) 5.9))))))
+        (with-current-buffer buf
+          (call-interactively #'duckdb-insert-buffer))
+        (should (bufferp popped-buffer))
+        (with-current-buffer popped-buffer
+          (should (eq major-mode 'duckdb-sql-mode))
+          (should (user-ptrp duckdb-current-connection))
+          (let ((results (duckdb-select duckdb-current-connection "SELECT count(*) FROM iris;")))
+            (should (equal (caar results) 150))))
+        (kill-buffer popped-buffer)
+        (kill-buffer buf)))))
 
 (provide 'duckdb-tests)
 ;;; duckdb-tests.el ends here
