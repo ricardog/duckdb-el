@@ -309,6 +309,15 @@
     (should (string= encoded "AP8Hgw=="))
     (should (equal decoded binary))))
 
+(ert-deftest duckdb-base64-large-test ()
+  "Test duckdb-base64-encode and duckdb-base64-decode with large data (exercises SIMD)."
+  (let* ((len 1024)
+         (original (apply #'unibyte-string (cl-loop repeat len collect (random 256))))
+         (encoded (duckdb-base64-encode original))
+         (decoded (duckdb-base64-decode encoded)))
+    (should (equal (length original) len))
+    (should (equal decoded original))))
+
 (ert-deftest duckdb-mode-open-file-test ()
   "Test duckdb-mode-open-file."
   (let ((buf (duckdb-mode-open-file ":memory:")))

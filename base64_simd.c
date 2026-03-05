@@ -57,9 +57,9 @@ base64_encode_neon(const unsigned char *src, size_t len, char *dst) {
     while (i + 48 <= len) {
         uint8x16x3_t in = vld3q_u8(src + i);
         
-        uint8x16_t c0 = vshr_n_u8(in.val[0], 2);
-        uint8x16_t c1 = vorrq_u8(vshlq_n_u8(vandq_u8(in.val[0], mask3), 4), vshr_n_u8(in.val[1], 4));
-        uint8x16_t c2 = vorrq_u8(vshlq_n_u8(vandq_u8(in.val[1], maskF), 2), vshr_n_u8(in.val[2], 6));
+        uint8x16_t c0 = vshrq_n_u8(in.val[0], 2);
+        uint8x16_t c1 = vorrq_u8(vshlq_n_u8(vandq_u8(in.val[0], mask3), 4), vshrq_n_u8(in.val[1], 4));
+        uint8x16_t c2 = vorrq_u8(vshlq_n_u8(vandq_u8(in.val[1], maskF), 2), vshrq_n_u8(in.val[2], 6));
         uint8x16_t c3 = vandq_u8(in.val[2], vdupq_n_u8(0x3F));
         
         uint8x16x4_t out;
