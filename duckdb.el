@@ -440,7 +440,7 @@ If BUFFER is nil, use the current buffer.
 If the table does not exist, it will be created automatically using read_csv_auto.
 
 Returns the connection object.
-When called interactively, pop up a buffer in `duckdb-sql-mode' to run queries."
+When called interactively, set 'duckdb-current-connection' in the current buffer."
   (interactive (list (duckdb--get-db-or-path) (read-string "Table name: ")))
   (let* ((buf (or buffer (current-buffer)))
          (file (buffer-file-name buf))
@@ -471,13 +471,8 @@ When called interactively, pop up a buffer in `duckdb-sql-mode' to run queries."
       ;; but if we are returning it, we keep it open.
       )
     (when (called-interactively-p 'any)
-      (let ((sql-buf (get-buffer-create (format "*DuckDB Query: %s*" table-name))))
-        (with-current-buffer sql-buf
-          (duckdb-sql-mode)
-          (setq-local duckdb-current-connection conn-ptr)
-          (setq-local duckdb--db-ptr db-ptr)
-          (insert (format "-- Querying table: %s\nSELECT * FROM %s LIMIT 10;\n" table-name table-name)))
-        (pop-to-buffer sql-buf)))
+      (setq-local duckdb-current-connection conn-ptr)
+      (setq-local duckdb--db-ptr db-ptr))
     conn-ptr))
 
 (provide 'duckdb)
