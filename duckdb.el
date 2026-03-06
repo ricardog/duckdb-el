@@ -396,16 +396,15 @@ Optional PARAMS are bound to the query."
                                                       row))
                                             rows)
                            :separator " | ")
-          ;; Fallback to tabulated-list-mode
-          (tabulated-list-mode)
-          (setq tabulated-list-format
-                (vconcat (mapcar (lambda (col) (list col 20 t)) columns)))
-          (setq tabulated-list-entries
-                (cl-loop for row in rows
-                         for i from 0
-                         collect (list i (vconcat (mapcar (lambda (val)
-                                                           (replace-regexp-in-string "\n" " " (format "%s" val)))
-                                                         row)))))
+          ;; Use tabulated-list features without calling the mode function
+          (setq-local tabulated-list-format
+                      (vconcat (mapcar (lambda (col) (list col 20 t)) columns)))
+          (setq-local tabulated-list-entries
+                      (cl-loop for row in rows
+                               for i from 0
+                               collect (list i (vconcat (mapcar (lambda (val)
+                                                                 (replace-regexp-in-string "\n" " " (format "%s" val)))
+                                                               row)))))
           (tabulated-list-init-header)
           (tabulated-list-print t))))
     (display-buffer buf)))
@@ -509,16 +508,17 @@ as the table name without prompting."
 (defvar-local duckdb--query-window-config nil)
 (defvar-local duckdb--query-edit-buffer nil)
 
-(define-derived-mode duckdb-query-results-mode duckdb-edit-mode "DuckDB-Results"
+(define-derived-mode duckdb-query-results-mode tabulated-list-mode "DuckDB-Results"
   "Major mode for displaying DuckDB query results from the browser."
-  (define-key duckdb-query-results-mode-map (kbd "q") #'duckdb-query-results-quit)
-  (define-key duckdb-query-results-mode-map (kbd "ESC") #'duckdb-query-results-quit)
-  (define-key duckdb-query-results-mode-map (kbd "e") #'duckdb-query-results-edit)
-  (define-key duckdb-query-results-mode-map (kbd "m") #'duckdb-query-results-fetch-more))
+  )
+(define-key duckdb-query-results-mode-map (kbd "q") #'duckdb-query-results-quit)
+(define-key duckdb-query-results-mode-map (kbd "e") #'duckdb-query-results-edit)
+(define-key duckdb-query-results-mode-map (kbd "m") #'duckdb-query-results-fetch-more)
 
 (define-derived-mode duckdb-query-edit-mode duckdb-sql-mode "DuckDB-Query-Edit"
   "Major mode for editing DuckDB queries."
-  (define-key duckdb-query-edit-mode-map (kbd "C-c C-c") #'duckdb-query-edit-run))
+  )
+(define-key duckdb-query-edit-mode-map (kbd "C-c C-c") #'duckdb-query-edit-run)
 
 (defun duckdb-browse-query ()
   "Prompt for a SQL query and display results."
@@ -597,17 +597,18 @@ as the table name without prompting."
                                                       row))
                                             rows)
                            :separator " | ")
-          ;; Fallback to tabulated-list-mode
-          (setq tabulated-list-format
-                (vconcat (mapcar (lambda (col) (list col 20 t)) columns)))
-          (setq tabulated-list-entries
-                (cl-loop for row in rows
-                         for i from 0
-                         collect (list (+ offset i) (vconcat (mapcar (lambda (val)
-                                                                       (replace-regexp-in-string "\n" " " (format "%s" val)))
-                                                                     row)))))
+          ;; Use tabulated-list features without calling the mode function
+          (setq-local tabulated-list-format
+                      (vconcat (mapcar (lambda (col) (list col 20 t)) columns)))
+          (setq-local tabulated-list-entries
+                      (cl-loop for row in rows
+                               for i from 0
+                               collect (list (+ offset i) (vconcat (mapcar (lambda (val)
+                                                                             (replace-regexp-in-string "\n" " " (format "%s" val)))
+                                                                           row)))))
           (tabulated-list-init-header)
-          (tabulated-list-print t))
+          (tabulated-list-print t)
+          (goto-char (point-max)))
         
         (let ((start (point)))
           (insert "\n")
@@ -621,11 +622,15 @@ as the table name without prompting."
           (insert "-- Showing rows " (number-to-string offset) " to " (number-to-string (+ offset (length rows))) "\n")
           (add-text-properties start (point) '(read-only t)))))
     
-    (let ((win (get-buffer-window buf)))
-      (if win
-          (select-window win)
-        (let ((new-win (display-buffer buf '(display-buffer-below-selected))))
-          (select-window new-win))))))
+    (let ((edit-win (get-buffer-window edit-buf)))
+      (if edit-win
+          (with-selected-window edit-win
+            (switch-to-buffer buf))
+        (let ((results-win (get-buffer-window buf)))
+          (if results-win
+              (select-window results-win)
+            (let ((new-win (display-buffer buf '(display-buffer-below-selected))))
+              (select-window new-win))))))))
 
 (defun duckdb-query-results-quit ()
   "Quit the results buffer and restore window configuration."
@@ -639,11 +644,11 @@ as the table name without prompting."
       (set-window-configuration win-config))))
 
 (defun duckdb-query-results-edit ()
-  "Return to the query edit buffer."
+  "Return to the query edit buffer, replacing the current buffer."
   (interactive)
   (let ((edit-buf duckdb--query-edit-buffer))
     (if (buffer-live-p edit-buf)
-        (pop-to-buffer edit-buf)
+        (switch-to-buffer edit-buf)
       (message "Edit buffer is gone"))))
 
 (defun duckdb-query-results-fetch-more ()

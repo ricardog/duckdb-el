@@ -63,4 +63,61 @@
           (should (duckdb-query-edit-run))))
       (kill-buffer edit-buf))))
 
+(ert-deftest duckdb-query-results-mode-bindings-test ()
+  "Test that global and local keybindings are accessible in duckdb-query-results-mode."
+  (with-duckdb conn ":memory:"
+    (let ((edit-buf (get-buffer-create "*DuckDB Edit Test*")))
+      (with-current-buffer edit-buf (duckdb-query-edit-mode))
+      ;; Simulate rendering results into the buffer
+      (duckdb--query-render-results '("id") '(("1")) "SELECT 1" 0 nil edit-buf conn nil nil)
+      (let ((results-buf (get-buffer "*DuckDB Query Results*")))
+        (should (bufferp results-buf))
+        (with-current-buffer results-buf
+          ;; Verify major mode is preserved and not overwritten by tabulated-list-mode
+          (should (eq major-mode 'duckdb-query-results-mode))
+          
+          ;; Check standard global/special-mode bindings (if present in environment)
+          (let ((mx (key-binding (kbd "M-x")))
+		(my (key-binding (kbd "M-y")))
+                (q (key-binding (kbd "q"))))
+            (should (eq mx 'execute-extended-command))
+            (should (eq my 'yank-pop))
+            ;; 'q' is bound in special-mode and overridden in our results mode
+            (should (eq q 'duckdb-query-results-quit)))
+          
+          ;; Check mode-specific bindings that were reported as missing
+          (should (eq (key-binding (kbd "e")) 'duckdb-query-results-edit))
+          (should (eq (key-binding (kbd "m")) 'duckdb-query-results-fetch-more)))
+        (kill-buffer results-buf)
+        (kill-buffer edit-buf)))))
+
+(ert-deftest duckdb-query-swap-logic-test ()
+  "Test the buffer swapping logic between edit and results."
+  (with-duckdb conn ":memory:"
+    (let* ((edit-buf (get-buffer-create "*DuckDB Edit Test*"))
+           (results-buf (get-buffer-create "*DuckDB Query Results*")))
+      (with-current-buffer edit-buf
+        (duckdb-query-edit-mode)
+        (setq-local duckdb-current-connection conn))
+      (with-current-buffer results-buf
+        (duckdb-query-results-mode)
+        (setq-local duckdb--query-edit-buffer edit-buf))
+      
+      ;; Test swap to edit
+      (with-temp-buffer
+        (let ((win (display-buffer results-buf)))
+          (with-selected-window win
+            (duckdb-query-results-edit)
+            (should (eq (window-buffer win) edit-buf)))))
+      
+      ;; Test swap back to results (simulated via render call)
+      (with-temp-buffer
+        (let ((win (display-buffer edit-buf)))
+          (with-selected-window win
+            (duckdb--query-render-results '("col") '(("val")) "SELECT 1" 0 nil edit-buf conn nil nil)
+            (should (eq (window-buffer win) (get-buffer "*DuckDB Query Results*"))))))
+      
+      (kill-buffer edit-buf)
+      (kill-buffer results-buf))))
+
 (provide 'duckdb-query-tests)
