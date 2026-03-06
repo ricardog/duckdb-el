@@ -442,7 +442,7 @@ If BUFFER is nil, use the current buffer.
 If the table does not exist, it will be created automatically using read_csv_auto.
 
 Returns the connection object.
-When called interactively, set 'duckdb-current-connection' in the current buffer.
+When called interactively, open a DuckDB Browser buffer for the database.
 With a prefix argument, use an in-memory database and the buffer's basename
 as the table name without prompting."
   (interactive
@@ -479,8 +479,6 @@ as the table name without prompting."
       ;; but if we are returning it, we keep it open.
       )
     (when (called-interactively-p 'any)
-      (setq-local duckdb-current-connection conn-ptr)
-      (setq-local duckdb--db-ptr db-ptr)
       ;; If we just opened a new database, or have the path, open a browser
       (let ((path (if (stringp db-or-path) db-or-path duckdb--db-path))
             (db (or db-ptr duckdb--db-ptr)))
