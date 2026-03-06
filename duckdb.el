@@ -442,8 +442,14 @@ If BUFFER is nil, use the current buffer.
 If the table does not exist, it will be created automatically using read_csv_auto.
 
 Returns the connection object.
-When called interactively, set 'duckdb-current-connection' in the current buffer."
-  (interactive (list (duckdb--get-db-or-path) (read-string "Table name: ")))
+When called interactively, set 'duckdb-current-connection' in the current buffer.
+With a prefix argument, use an in-memory database and the buffer's basename
+as the table name without prompting."
+  (interactive
+   (if current-prefix-arg
+       (list ":memory:"
+             (file-name-sans-extension (file-name-nondirectory (or (buffer-file-name) (buffer-name)))))
+     (list (duckdb--get-db-or-path) (read-string "Table name: "))))
   (let* ((buf (or buffer (current-buffer)))
          (file (buffer-file-name buf))
          (db-ptr nil)
