@@ -377,10 +377,9 @@ Optional PARAMS are bound to the query."
   (add-hook 'completion-at-point-functions #'duckdb-completion-at-point nil t))
 
 ;; SQL-Scrubber (Interactive results)
-(define-derived-mode duckdb-edit-mode tabulated-list-mode "DuckDB Edit"
+(define-derived-mode duckdb-edit-mode special-mode "DuckDB Edit"
   "Major mode for displaying DuckDB query results."
-  (setq-local tabulated-list-padding 2)
-  (tabulated-list-init-header))
+  (setq-local tabulated-list-padding 2))
 
 (defun duckdb--render-results (columns rows)
   "Render COLUMNS and ROWS into a DuckDB Results buffer."
@@ -388,6 +387,7 @@ Optional PARAMS are bound to the query."
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
+        (duckdb-edit-mode)
         (if (and (fboundp 'vtable-insert) (featurep 'vtable))
             (vtable-insert :columns columns
                            :objects (mapcar (lambda (row)
@@ -397,7 +397,7 @@ Optional PARAMS are bound to the query."
                                             rows)
                            :separator " | ")
           ;; Fallback to tabulated-list-mode
-          (duckdb-edit-mode)
+          (tabulated-list-mode)
           (setq tabulated-list-format
                 (vconcat (mapcar (lambda (col) (list col 20 t)) columns)))
           (setq tabulated-list-entries
@@ -406,6 +406,7 @@ Optional PARAMS are bound to the query."
                          collect (list i (vconcat (mapcar (lambda (val)
                                                            (replace-regexp-in-string "\n" " " (format "%s" val)))
                                                          row)))))
+          (tabulated-list-init-header)
           (tabulated-list-print t))))
     (display-buffer buf)))
 
@@ -605,16 +606,19 @@ as the table name without prompting."
                          collect (list (+ offset i) (vconcat (mapcar (lambda (val)
                                                                        (replace-regexp-in-string "\n" " " (format "%s" val)))
                                                                      row)))))
+          (tabulated-list-init-header)
           (tabulated-list-print t))
         
         (let ((start (point)))
-          (insert "\n-- Query: " sql "\n")
-          (insert "-- Showing rows " (number-to-string offset) " to " (number-to-string (+ offset (length rows))) "\n")
+          (insert "\n")
           (insert (propertize "[Fetch More (m)]" 'face 'link 'help-echo "Click or press 'm' to fetch more rows" 'mouse-face 'highlight 'duckdb-action 'fetch-more))
           (insert "  ")
           (insert (propertize "[Edit Query (e)]" 'face 'link 'help-echo "Click or press 'e' to edit query" 'mouse-face 'highlight 'duckdb-action 'edit-query))
           (insert "  ")
           (insert (propertize "[Quit (q)]" 'face 'link 'help-echo "Click or press 'q' to close results" 'mouse-face 'highlight 'duckdb-action 'quit))
+          (insert "\n\n")
+          (insert "-- Query: " sql "\n")
+          (insert "-- Showing rows " (number-to-string offset) " to " (number-to-string (+ offset (length rows))) "\n")
           (add-text-properties start (point) '(read-only t)))))
     
     (let ((win (display-buffer buf '(display-buffer-below-selected))))
