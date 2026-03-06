@@ -480,7 +480,22 @@ as the table name without prompting."
       )
     (when (called-interactively-p 'any)
       (setq-local duckdb-current-connection conn-ptr)
-      (setq-local duckdb--db-ptr db-ptr))
+      (setq-local duckdb--db-ptr db-ptr)
+      ;; If we just opened a new database, or have the path, open a browser
+      (let ((path (if (stringp db-or-path) db-or-path duckdb--db-path))
+            (db (or db-ptr duckdb--db-ptr)))
+        (if db
+            (let* ((new-conn (duckdb-connect db))
+                   (buf (get-buffer-create (format "*DuckDB: %s*" (or path "memory")))))
+              (with-current-buffer buf
+                (duckdb-browse-mode)
+                (setq-local duckdb-current-connection new-conn)
+                (setq-local duckdb--db-ptr db)
+                (setq-local duckdb--db-path path)
+                (duckdb-browse-refresh))
+              (pop-to-buffer buf))
+          (when (stringp path)
+            (duckdb-mode-open-file path)))))
     conn-ptr))
 
 ;;; Interactive Querying

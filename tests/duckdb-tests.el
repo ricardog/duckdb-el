@@ -389,11 +389,13 @@
       (duckdb-disconnect conn))))
 
 (ert-deftest duckdb-insert-buffer-interactive-test ()
-  "Test interactive duckdb-insert-buffer (mocked input)."
+  "Test interactive duckdb-insert-buffer (mocked pop-to-buffer and input)."
   (let ((iris-file (expand-file-name "iris.csv" (or (and load-file-name (file-name-directory load-file-name))
                                                    (and buffer-file-name (file-name-directory buffer-file-name))
-                                                   default-directory))))
-    (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "iris"))
+                                                   default-directory)))
+        (popped-buffer nil))
+    (cl-letf (((symbol-function 'pop-to-buffer) (lambda (buf &rest _) (setq popped-buffer buf)))
+              ((symbol-function 'read-string) (lambda (&rest _) "iris"))
               ((symbol-function 'duckdb--get-db-or-path) (lambda () ":memory:")))
       (let ((buf (find-file-noselect iris-file)))
         (with-current-buffer buf
@@ -401,22 +403,36 @@
           (should (user-ptrp duckdb-current-connection))
           (let ((results (duckdb-select duckdb-current-connection "SELECT count(*) FROM iris;")))
             (should (equal (caar results) 150))))
+        (should (bufferp popped-buffer))
+        (with-current-buffer popped-buffer
+          (should (eq major-mode 'duckdb-browse-mode))
+          (should (string-match "iris" (buffer-string)))
+          (should (string-match "150" (buffer-string))))
+        (kill-buffer popped-buffer)
         (kill-buffer buf)))))
 
 (ert-deftest duckdb-insert-buffer-prefix-test ()
   "Test duckdb-insert-buffer with prefix argument (automatic :memory: and table name)."
   (let ((iris-file (expand-file-name "iris.csv" (or (and load-file-name (file-name-directory load-file-name))
                                                    (and buffer-file-name (file-name-directory buffer-file-name))
-                                                   default-directory))))
-    (let ((buf (find-file-noselect iris-file))
-          (current-prefix-arg t))
-      (with-current-buffer buf
-        (call-interactively #'duckdb-insert-buffer)
-        (should (user-ptrp duckdb-current-connection))
-        ;; table name should be "iris" (basename of iris.csv)
-        (let ((results (duckdb-select duckdb-current-connection "SELECT count(*) FROM iris;")))
-          (should (equal (caar results) 150))))
-      (kill-buffer buf))))
+                                                   default-directory)))
+        (popped-buffer nil))
+    (cl-letf (((symbol-function 'pop-to-buffer) (lambda (buf &rest _) (setq popped-buffer buf))))
+      (let ((buf (find-file-noselect iris-file))
+            (current-prefix-arg t))
+        (with-current-buffer buf
+          (call-interactively #'duckdb-insert-buffer)
+          (should (user-ptrp duckdb-current-connection))
+          ;; table name should be "iris" (basename of iris.csv)
+          (let ((results (duckdb-select duckdb-current-connection "SELECT count(*) FROM iris;")))
+            (should (equal (caar results) 150))))
+        (should (bufferp popped-buffer))
+        (with-current-buffer popped-buffer
+          (should (eq major-mode 'duckdb-browse-mode))
+          (should (string-match "iris" (buffer-string)))
+          (should (string-match "150" (buffer-string))))
+        (kill-buffer popped-buffer)
+        (kill-buffer buf)))))
 
 (provide 'duckdb-tests)
 ;;; duckdb-tests.el ends here
