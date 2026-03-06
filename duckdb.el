@@ -537,7 +537,7 @@ as the table name without prompting."
       (setq-local duckdb--db-path db-path)
       (setq-local duckdb--query-window-config win-config)
       (erase-buffer)
-      (insert "-- Enter SQL query here (SELECT, DESCRIBE, EXPLAIN or PRAGMA only)\n")
+      (insert "-- Edit SQL below and press C-c C-c to run (SELECT, DESCRIBE, EXPLAIN or PRAGMA only)\n")
       (insert "SELECT * FROM "))
     (pop-to-buffer buf)))
 
@@ -621,8 +621,11 @@ as the table name without prompting."
           (insert "-- Showing rows " (number-to-string offset) " to " (number-to-string (+ offset (length rows))) "\n")
           (add-text-properties start (point) '(read-only t)))))
     
-    (let ((win (display-buffer buf '(display-buffer-below-selected))))
-      (select-window win))))
+    (let ((win (get-buffer-window buf)))
+      (if win
+          (select-window win)
+        (let ((new-win (display-buffer buf '(display-buffer-below-selected))))
+          (select-window new-win))))))
 
 (defun duckdb-query-results-quit ()
   "Quit the results buffer and restore window configuration."
