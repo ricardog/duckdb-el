@@ -40,6 +40,7 @@
 (declare-function duckdb-async-poll "duckdb-core.so" (ctx))
 (declare-function duckdb-base64-encode "duckdb-core.so" (string))
 (declare-function duckdb-base64-decode "duckdb-core.so" (string))
+(declare-function duckdb-query-type "duckdb-core.so" (conn-ptr sql))
 
 (defvar duckdb--async-queries nil
   "List of active asynchronous query contexts.")
@@ -113,6 +114,7 @@ Optional PARAMS are bound to the query."
 
 (define-key duckdb-browse-mode-map (kbd "RET") #'duckdb-browse-toggle-table)
 (define-key duckdb-browse-mode-map (kbd "c") #'duckdb-browse-toggle-columns)
+(define-key duckdb-browse-mode-map (kbd "Q") #'duckdb-browse-query)
 
 (defun duckdb-browse-refresh (&optional _ignore-auto _noconfirm)
   "Refresh the table list."
@@ -133,7 +135,7 @@ Optional PARAMS are bound to the query."
                                `(duckdb-table-name ,name 
                                  face duckdb-browse-table-name
                                  mouse-face highlight 
-                                 help-echo "RET: toggle data, c: toggle columns")))))
+                                 help-echo "RET: toggle data, c: toggle columns, Q: query, q: quit")))))
     (setq duckdb--expanded-table nil)
     (setq duckdb--expanded-overlay nil)
     (goto-char (min pos (point-max)))
@@ -474,6 +476,161 @@ When called interactively, set 'duckdb-current-connection' in the current buffer
       (setq-local duckdb-current-connection conn-ptr)
       (setq-local duckdb--db-ptr db-ptr))
     conn-ptr))
+
+;;; Interactive Querying
+
+(defcustom duckdb-query-limit 1000
+  "Default limit for queries from the browser."
+  :type 'integer
+  :group 'duckdb)
+
+(defvar-local duckdb--query-sql nil)
+(defvar-local duckdb--query-offset 0)
+(defvar-local duckdb--query-window-config nil)
+(defvar-local duckdb--query-edit-buffer nil)
+
+(define-derived-mode duckdb-query-results-mode duckdb-edit-mode "DuckDB-Results"
+  "Major mode for displaying DuckDB query results from the browser."
+  (define-key duckdb-query-results-mode-map (kbd "q") #'duckdb-query-results-quit)
+  (define-key duckdb-query-results-mode-map (kbd "ESC") #'duckdb-query-results-quit)
+  (define-key duckdb-query-results-mode-map (kbd "e") #'duckdb-query-results-edit)
+  (define-key duckdb-query-results-mode-map (kbd "m") #'duckdb-query-results-fetch-more))
+
+(define-derived-mode duckdb-query-edit-mode duckdb-sql-mode "DuckDB-Query-Edit"
+  "Major mode for editing DuckDB queries."
+  (define-key duckdb-query-edit-mode-map (kbd "C-c C-c") #'duckdb-query-edit-run))
+
+(defun duckdb-browse-query ()
+  "Prompt for a SQL query and display results."
+  (interactive)
+  (unless duckdb-current-connection
+    (error "No active DuckDB connection"))
+  (let ((buf (get-buffer-create (format "*DuckDB Query: %s*" (or duckdb--db-path "memory"))))
+        (conn duckdb-current-connection)
+        (db-ptr duckdb--db-ptr)
+        (db-path duckdb--db-path)
+        (win-config (current-window-configuration)))
+    (with-current-buffer buf
+      (duckdb-query-edit-mode)
+      (setq-local duckdb-current-connection conn)
+      (setq-local duckdb--db-ptr db-ptr)
+      (setq-local duckdb--db-path db-path)
+      (setq-local duckdb--query-window-config win-config)
+      (erase-buffer)
+      (insert "-- Enter SQL query here (SELECT, DESCRIBE, EXPLAIN or PRAGMA only)\n")
+      (insert "SELECT * FROM "))
+    (pop-to-buffer buf)))
+
+(defun duckdb-query-edit-run ()
+  "Run the query in the current buffer."
+  (interactive)
+  (let ((sql (buffer-substring-no-properties (point-min) (point-max)))
+        (conn duckdb-current-connection)
+        (db-ptr duckdb--db-ptr)
+        (db-path duckdb--db-path)
+        (win-config duckdb--query-window-config)
+        (edit-buf (current-buffer)))
+    ;; Check query type
+    (let ((type (duckdb-query-type conn sql)))
+      (unless (member type '(SELECT DESCRIBE EXPLAIN PRAGMA))
+        (error "Only SELECT, DESCRIBE, EXPLAIN and PRAGMA statements are allowed (got %s)" type)))
+    
+    (duckdb--query-execute conn sql 0 win-config edit-buf db-ptr db-path)))
+
+(defun duckdb--query-execute (conn sql offset win-config edit-buf db-ptr db-path)
+  "Execute SQL and display results."
+  (let* ((limited-sql (format "%s LIMIT %d OFFSET %d" sql duckdb-query-limit offset))
+         (results (duckdb-select-columns conn limited-sql))
+         (data-plist (plist-get results :data))
+         (types-plist (plist-get results :types))
+         (keys (cl-loop for (k v) on data-plist by 'cddr collect k))
+         (columns (mapcar (lambda (k) (substring (symbol-name k) 1)) keys))
+         (data (cl-loop for (k v) on data-plist by 'cddr collect v))
+         (types (cl-loop for (k v) on types-plist by 'cddr collect v))
+         (num-rows (if data (length (car data)) 0))
+         (rows (cl-loop for r from 0 to (1- num-rows)
+                        collect (cl-loop for col-vec in data
+                                         for type in types
+                                         collect (duckdb--format-value (aref col-vec r) type)))))
+    (duckdb--query-render-results columns rows sql offset win-config edit-buf conn db-ptr db-path)))
+
+(defun duckdb--query-render-results (columns rows sql offset win-config edit-buf conn db-ptr db-path)
+  "Render query results."
+  (let ((buf (get-buffer-create "*DuckDB Query Results*")))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (duckdb-query-results-mode)
+        (setq-local duckdb-current-connection conn)
+        (setq-local duckdb--db-ptr db-ptr)
+        (setq-local duckdb--db-path db-path)
+        (setq-local duckdb--query-sql sql)
+        (setq-local duckdb--query-offset offset)
+        (setq-local duckdb--query-window-config win-config)
+        (setq-local duckdb--query-edit-buffer edit-buf)
+        
+        (if (and (fboundp 'vtable-insert) (featurep 'vtable))
+            (vtable-insert :columns columns
+                           :objects (mapcar (lambda (row)
+                                              (mapcar (lambda (val)
+                                                        (replace-regexp-in-string "\n" " " (format "%s" val)))
+                                                      row))
+                                            rows)
+                           :separator " | ")
+          ;; Fallback to tabulated-list-mode
+          (setq tabulated-list-format
+                (vconcat (mapcar (lambda (col) (list col 20 t)) columns)))
+          (setq tabulated-list-entries
+                (cl-loop for row in rows
+                         for i from 0
+                         collect (list (+ offset i) (vconcat (mapcar (lambda (val)
+                                                                       (replace-regexp-in-string "\n" " " (format "%s" val)))
+                                                                     row)))))
+          (tabulated-list-print t))
+        
+        (let ((start (point)))
+          (insert "\n-- Query: " sql "\n")
+          (insert "-- Showing rows " (number-to-string offset) " to " (number-to-string (+ offset (length rows))) "\n")
+          (insert (propertize "[Fetch More (m)]" 'face 'link 'help-echo "Click or press 'm' to fetch more rows" 'mouse-face 'highlight 'duckdb-action 'fetch-more))
+          (insert "  ")
+          (insert (propertize "[Edit Query (e)]" 'face 'link 'help-echo "Click or press 'e' to edit query" 'mouse-face 'highlight 'duckdb-action 'edit-query))
+          (insert "  ")
+          (insert (propertize "[Quit (q)]" 'face 'link 'help-echo "Click or press 'q' to close results" 'mouse-face 'highlight 'duckdb-action 'quit))
+          (add-text-properties start (point) '(read-only t)))))
+    
+    (let ((win (display-buffer buf '(display-buffer-below-selected))))
+      (select-window win))))
+
+(defun duckdb-query-results-quit ()
+  "Quit the results buffer and restore window configuration."
+  (interactive)
+  (let ((win-config duckdb--query-window-config)
+        (edit-buf duckdb--query-edit-buffer))
+    (kill-buffer (current-buffer))
+    (when (buffer-live-p edit-buf)
+      (kill-buffer edit-buf))
+    (when win-config
+      (set-window-configuration win-config))))
+
+(defun duckdb-query-results-edit ()
+  "Return to the query edit buffer."
+  (interactive)
+  (let ((edit-buf duckdb--query-edit-buffer))
+    (if (buffer-live-p edit-buf)
+        (pop-to-buffer edit-buf)
+      (message "Edit buffer is gone"))))
+
+(defun duckdb-query-results-fetch-more ()
+  "Fetch more rows for the current query."
+  (interactive)
+  (let ((sql duckdb--query-sql)
+        (offset (+ duckdb--query-offset duckdb-query-limit))
+        (conn duckdb-current-connection)
+        (db-ptr duckdb--db-ptr)
+        (db-path duckdb--db-path)
+        (win-config duckdb--query-window-config)
+        (edit-buf duckdb--query-edit-buffer))
+    (duckdb--query-execute conn sql offset win-config edit-buf db-ptr db-path)))
 
 (provide 'duckdb)
 ;;; duckdb.el ends here

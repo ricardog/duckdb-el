@@ -68,6 +68,12 @@ To ensure memory safety, the module uses Emacs `user_ptr` objects with finalizer
 * `(duckdb-step stmt-ptr)`  
     Executes the statement. Returns a single row or `nil`.
 
+### 3.4 Introspection & Safety
+* `(duckdb-query-type conn-ptr sql)`  
+    Analyzes the SQL statement without executing it.  
+    **Returns:** A symbol representing the statement type: `'SELECT`, `'INSERT`, `'UPDATE`, `'DELETE`, `'DESCRIBE`, `'OTHER`.  
+    *Ideal for: Enforcing read-only policies in interactive buffers.*
+
 ---
 
 ## 4. Asynchronous Execution (Non-Blocking)
@@ -125,6 +131,25 @@ DuckDB is famous for its ability to "query anything." Users should be able to po
 ```
 
 * **Elisp:** A `completion-at-point-function` that calls these primitives when the user is typing inside a `duckdb-sql-mode` buffer.
+
+### 5.5 "DuckDB Browser Querying" (The Explorer)
+
+The DuckDB Browser should allow users to perform ad-hoc queries on the current database.
+
+* **Feature:** `duckdb-browse-query`.
+* **Policy:** **Strict.** Only `SELECT` and `DESCRIBE` statements are allowed. The `duckdb-query-type` primitive is used to enforce this policy.
+* **Input Mechanism:**
+    *   Opens a popup buffer/window for query entry.
+    *   Uses `sql-mode` (or a derived `duckdb-sql-mode`) with `completion-at-point` support.
+    *   `C-c C-c` executes the query.
+* **Results Display:**
+    *   The window is split, and results are displayed in a separate buffer.
+    *   Typing `q` or `ESC` in the results buffer deletes it and restores the previous window configuration.
+* **Large Result Sets:**
+    *   Initial results are limited (e.g., 1000 rows).
+    *   A "Fetch more" button/command is provided at the bottom of the results buffer to load additional rows.
+* **Interactive Iteration:**
+    *   A command is provided to quickly return to the query entry buffer to edit and rerun the query.
 
 ---
 

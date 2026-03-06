@@ -1100,6 +1100,80 @@ Fduckdb_async_poll(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *da
 }
 
 static emacs_value
+Fduckdb_query_type(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+{
+  (void)nargs;
+  (void)data;
+
+  if (!env->eq(env, env->type_of(env, args[0]), env->intern(env, "user-ptr")))
+  {
+    SIGNAL_ERROR(env, "wrong-type-argument", "Expected user-ptr for duckdb-conn-ptr");
+    return env->intern(env, "nil");
+  }
+
+  duckdb_connection *conn_ptr = (duckdb_connection *)env->get_user_ptr(env, args[0]);
+  if (!conn_ptr || !*conn_ptr)
+  {
+    SIGNAL_ERROR(env, "duckdb-error", "Invalid connection pointer");
+    return env->intern(env, "nil");
+  }
+
+  char *sql = extract_string(env, args[1]);
+  if (!sql)
+  {
+    SIGNAL_ERROR(env, "error", "Invalid SQL argument");
+    return env->intern(env, "nil");
+  }
+
+  duckdb_prepared_statement stmt;
+  if (duckdb_prepare(*conn_ptr, sql, &stmt) == DuckDBError)
+  {
+    const char *error_msg = duckdb_prepare_error(stmt);
+    SIGNAL_ERROR(env, "duckdb-error", error_msg ? error_msg : "Failed to prepare statement");
+    duckdb_destroy_prepare(&stmt);
+    free(sql);
+    return env->intern(env, "nil");
+  }
+  free(sql);
+
+  duckdb_statement_type type = duckdb_prepared_statement_type(stmt);
+  duckdb_destroy_prepare(&stmt);
+
+  const char *type_str;
+  switch (type) {
+    case DUCKDB_STATEMENT_TYPE_SELECT: type_str = "SELECT"; break;
+    case DUCKDB_STATEMENT_TYPE_INSERT: type_str = "INSERT"; break;
+    case DUCKDB_STATEMENT_TYPE_UPDATE: type_str = "UPDATE"; break;
+    case DUCKDB_STATEMENT_TYPE_DELETE: type_str = "DELETE"; break;
+    case DUCKDB_STATEMENT_TYPE_EXPLAIN: type_str = "EXPLAIN"; break;
+    case DUCKDB_STATEMENT_TYPE_CREATE: type_str = "CREATE"; break;
+    case DUCKDB_STATEMENT_TYPE_EXECUTE: type_str = "EXECUTE"; break;
+    case DUCKDB_STATEMENT_TYPE_ALTER: type_str = "ALTER"; break;
+    case DUCKDB_STATEMENT_TYPE_TRANSACTION: type_str = "TRANSACTION"; break;
+    case DUCKDB_STATEMENT_TYPE_COPY: type_str = "COPY"; break;
+    case DUCKDB_STATEMENT_TYPE_ANALYZE: type_str = "ANALYZE"; break;
+    case DUCKDB_STATEMENT_TYPE_VARIABLE_SET: type_str = "VARIABLE_SET"; break;
+    case DUCKDB_STATEMENT_TYPE_CREATE_FUNC: type_str = "CREATE_FUNC"; break;
+    case DUCKDB_STATEMENT_TYPE_DROP: type_str = "DROP"; break;
+    case DUCKDB_STATEMENT_TYPE_EXPORT: type_str = "EXPORT"; break;
+    case DUCKDB_STATEMENT_TYPE_PRAGMA: type_str = "PRAGMA"; break;
+    case DUCKDB_STATEMENT_TYPE_VACUUM: type_str = "VACUUM"; break;
+    case DUCKDB_STATEMENT_TYPE_CALL: type_str = "CALL"; break;
+    case DUCKDB_STATEMENT_TYPE_SET: type_str = "SET"; break;
+    case DUCKDB_STATEMENT_TYPE_LOAD: type_str = "LOAD"; break;
+    case DUCKDB_STATEMENT_TYPE_RELATION: type_str = "RELATION"; break;
+    case DUCKDB_STATEMENT_TYPE_EXTENSION: type_str = "EXTENSION"; break;
+    case DUCKDB_STATEMENT_TYPE_LOGICAL_PLAN: type_str = "LOGICAL_PLAN"; break;
+    case DUCKDB_STATEMENT_TYPE_ATTACH: type_str = "ATTACH"; break;
+    case DUCKDB_STATEMENT_TYPE_DETACH: type_str = "DETACH"; break;
+    case DUCKDB_STATEMENT_TYPE_MULTI: type_str = "MULTI"; break;
+    default: type_str = "OTHER"; break;
+  }
+
+  return env->intern(env, type_str);
+}
+
+static emacs_value
 Fduckdb_base64_encode(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
 {
   (void)nargs;
@@ -1259,6 +1333,11 @@ emacs_module_init(struct emacs_runtime *ert)
   emacs_value b64_dec_func = env->make_function(env, 1, 1, Fduckdb_base64_decode, "Decode base64 string using SIMD.", NULL);
   emacs_value b64_dec_sym = env->intern(env, "duckdb-base64-decode");
   env->funcall(env, env->intern(env, "fset"), 2, (emacs_value[]){ b64_dec_sym, b64_dec_func });
+
+  /* Register Fduckdb_query_type */
+  emacs_value query_type_func = env->make_function(env, 2, 2, Fduckdb_query_type, "Return the type of a SQL query.", NULL);
+  emacs_value query_type_sym = env->intern(env, "duckdb-query-type");
+  env->funcall(env, env->intern(env, "fset"), 2, (emacs_value[]){ query_type_sym, query_type_func });
 
   /* Provide duckdb-core */
   emacs_value provide_sym = env->intern(env, "provide");
