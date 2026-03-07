@@ -366,10 +366,18 @@ Optional PARAMS are bound to the query."
       (list start end
             (completion-table-dynamic
              (lambda (str)
-               (let ((tables (duckdb-get-tables duckdb-current-connection)))
-                 (if (member str tables)
-                     (duckdb-get-columns duckdb-current-connection str)
-                   tables))))
+               (cond
+                ;; table.column completion
+                ((string-match "\\`\\([^.]+\\)\\.\\(.*\\)" str)
+                 (let ((table (match-string 1 str)))
+                   (mapcar (lambda (col) (concat table "." col))
+                           (duckdb-get-columns duckdb-current-connection table))))
+                ;; table or column completion
+                (t
+                 (let ((tables (duckdb-get-tables duckdb-current-connection)))
+                   (append tables
+                           (cl-loop for table in tables
+                                    append (duckdb-get-columns duckdb-current-connection table))))))))
             :exclusive 'no))))
 
 (define-derived-mode duckdb-sql-mode sql-mode "DuckDB SQL"
@@ -518,6 +526,7 @@ as the table name without prompting."
 (define-derived-mode duckdb-query-edit-mode duckdb-sql-mode "DuckDB-Query-Edit"
   "Major mode for editing DuckDB queries."
   )
+(define-key duckdb-query-edit-mode-map (kbd "TAB") #'completion-at-point)
 (define-key duckdb-query-edit-mode-map (kbd "C-c C-c") #'duckdb-query-edit-run)
 
 (defun duckdb-browse-query ()

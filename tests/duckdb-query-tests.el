@@ -120,4 +120,51 @@
       (kill-buffer edit-buf)
       (kill-buffer results-buf))))
 
+(ert-deftest duckdb-query-edit-mode-tab-binding-test ()
+  "Test that TAB is bound to completion-at-point in duckdb-query-edit-mode."
+  (let ((buf (get-buffer-create "*DuckDB Query Edit Test*")))
+    (with-current-buffer buf
+      (duckdb-query-edit-mode)
+      (should (eq (key-binding (kbd "TAB")) 'completion-at-point)))
+    (kill-buffer buf)))
+
+(ert-deftest duckdb-clean-sql-test ()
+  "Test that duckdb--clean-sql strips the initial comment."
+  (let ((comment "-- Edit SQL below and press C-c C-c to run (SELECT, DESCRIBE, EXPLAIN or PRAGMA only)\n")
+        (query "SELECT 1"))
+    (should (string= (duckdb--clean-sql (concat comment query)) query))
+    (should (string= (duckdb--clean-sql query) query))))
+
+(ert-deftest duckdb-completion-at-point-test ()
+  "Test duckdb-completion-at-point for tables and columns."
+  (with-duckdb conn ":memory:"
+    (duckdb-execute conn "CREATE TABLE users (id INTEGER, name VARCHAR)")
+    (duckdb-execute conn "CREATE TABLE posts (id INTEGER, title VARCHAR)")
+    
+    (let ((buf (get-buffer-create "*DuckDB Completion Test*")))
+      (with-current-buffer buf
+        (duckdb-query-edit-mode)
+        (setq-local duckdb-current-connection conn)
+        
+        ;; 1. Test all completions (no prefix)
+        (let ((res (duckdb-completion-at-point)))
+          (should res)
+          (let ((table (nth 2 res)))
+            (let ((completions (funcall table "" nil t)))
+              (should (member "users" completions))
+              (should (member "posts" completions))
+              (should (member "name" completions))
+              (should (member "title" completions)))))
+        
+        ;; 2. Test table.column completion
+        (insert "users.")
+        (let ((res (duckdb-completion-at-point)))
+          (should res)
+          (let ((table (nth 2 res)))
+            (let ((completions (funcall table "users." nil t)))
+              (should (member "users.id" completions))
+              (should (member "users.name" completions))
+              (should-not (member "posts.id" completions))))))
+      (kill-buffer buf))))
+
 (provide 'duckdb-query-tests)
