@@ -167,4 +167,24 @@
               (should-not (member "posts.id" completions))))))
       (kill-buffer buf))))
 
+(ert-deftest duckdb-query-execute-error-test ()
+  "Test that duckdb--query-execute correctly handles DuckDB errors."
+  (with-duckdb conn ":memory:"
+    (let ((edit-buf (get-buffer-create "*DuckDB Edit Test*")))
+      (with-current-buffer edit-buf
+        (duckdb-query-edit-mode)
+        (setq-local duckdb-current-connection conn))
+      
+      ;; Expect duckdb-error when executing invalid SQL
+      (let ((caught nil))
+        (condition-case err
+            (duckdb--query-execute conn "SELECT * FROM non_existent_table" 0 nil edit-buf nil nil)
+          (duckdb-error 
+           (setq caught t)
+           ;; Check that the error message contains the table name
+           (should (string-match-p "non_existent_table" (error-message-string err)))))
+        (should caught))
+      
+      (kill-buffer edit-buf))))
+
 (provide 'duckdb-query-tests)

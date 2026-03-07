@@ -12,7 +12,9 @@ extern int plugin_is_GPL_compatible;
   do {                                                                         \
     emacs_value sym = (env)->intern((env), (symbol));                          \
     emacs_value msg = (env)->make_string((env), (message), strlen(message));   \
-    (env)->non_local_exit_signal((env), sym, msg);                             \
+    emacs_value list_sym = (env)->intern((env), "list");                       \
+    emacs_value args_list = (env)->funcall((env), list_sym, 1, &msg);           \
+    (env)->non_local_exit_signal((env), sym, args_list);                       \
   } while (0)
 
 #endif /* DUCKDB_API_H */

@@ -583,20 +583,27 @@ as the table name without prompting."
     (duckdb--query-execute conn sql 0 win-config edit-buf db-ptr db-path)))
 (defun duckdb--query-execute (conn sql offset win-config edit-buf db-ptr db-path)
   "Execute SQL and display results."
-  (let* ((limited-sql (format "%s LIMIT %d OFFSET %d" sql duckdb-query-limit offset))
-         (results (duckdb-select-columns conn limited-sql))
-         (data-plist (plist-get results :data))
-         (types-plist (plist-get results :types))
-         (keys (cl-loop for (k v) on data-plist by 'cddr collect k))
-         (columns (mapcar (lambda (k) (substring (symbol-name k) 1)) keys))
-         (data (cl-loop for (k v) on data-plist by 'cddr collect v))
-         (types (cl-loop for (k v) on types-plist by 'cddr collect v))
-         (num-rows (if data (length (car data)) 0))
-         (rows (cl-loop for r from 0 to (1- num-rows)
-                        collect (cl-loop for col-vec in data
-                                         for type in types
-                                         collect (duckdb--format-value (aref col-vec r) type)))))
-    (duckdb--query-render-results columns rows sql offset win-config edit-buf conn db-ptr db-path)))
+  (condition-case err
+      (let* ((limited-sql (format "%s LIMIT %d OFFSET %d" sql duckdb-query-limit offset))
+             (results (duckdb-select-columns conn limited-sql))
+             (data-plist (plist-get results :data))
+             (types-plist (plist-get results :types))
+             (keys (cl-loop for (k v) on data-plist by 'cddr collect k))
+             (columns (mapcar (lambda (k) (substring (symbol-name k) 1)) keys))
+             (data (cl-loop for (k v) on data-plist by 'cddr collect v))
+             (types (cl-loop for (k v) on types-plist by 'cddr collect v))
+             (num-rows (if data (length (car data)) 0))
+             (rows (cl-loop for r from 0 to (1- num-rows)
+                            collect (cl-loop for col-vec in data
+                                             for type in types
+                                             collect (duckdb--format-value (aref col-vec r) type)))))
+        (duckdb--query-render-results columns rows sql offset win-config edit-buf conn db-ptr db-path))
+    (duckdb-error
+     (message "DuckDB Error: %s" (error-message-string err))
+     (signal (car err) (cdr err)))
+    (error
+     (message "Error: %s" (error-message-string err))
+     (signal (car err) (cdr err)))))
 
 (defun duckdb--query-render-results (columns rows sql offset win-config edit-buf conn db-ptr db-path)
   "Render query results."
