@@ -4,6 +4,8 @@
 
 ;; Load the dynamic module
 (require 'duckdb-core)
+(require 'sql)
+(require 'font-lock)
 
 (defgroup duckdb nil
   "DuckDB integration for Emacs."
@@ -550,22 +552,35 @@ as the table name without prompting."
       (insert "SELECT * FROM "))
     (pop-to-buffer buf)))
 
+(defun duckdb--clean-sql (sql)
+  "Strip the initial instructions comment from SQL and apply syntax highlighting."
+  (let ((clean-sql (if (string-match "\\`-- Edit SQL below and press C-c C-c to run (SELECT, DESCRIBE, EXPLAIN or PRAGMA only)\n" sql)
+                       (substring sql (match-end 0))
+                     sql)))
+    (with-temp-buffer
+      (insert clean-sql)
+      (duckdb-sql-mode)
+      (if (fboundp 'font-lock-ensure)
+          (font-lock-ensure)
+        (with-no-warnings (font-lock-fontify-buffer)))
+      (buffer-string))))
+
 (defun duckdb-query-edit-run ()
   "Run the query in the current buffer."
   (interactive)
-  (let ((sql (buffer-substring-no-properties (point-min) (point-max)))
-        (conn duckdb-current-connection)
-        (db-ptr duckdb--db-ptr)
-        (db-path duckdb--db-path)
-        (win-config duckdb--query-window-config)
-        (edit-buf (current-buffer)))
+  (let* ((raw-sql (buffer-substring-no-properties (point-min) (point-max)))
+         (sql (duckdb--clean-sql raw-sql))
+         (conn duckdb-current-connection)
+         (db-ptr duckdb--db-ptr)
+         (db-path duckdb--db-path)
+         (win-config duckdb--query-window-config)
+         (edit-buf (current-buffer)))
     ;; Check query type
     (let ((type (duckdb-query-type conn sql)))
       (unless (member type '(SELECT DESCRIBE EXPLAIN PRAGMA))
         (error "Only SELECT, DESCRIBE, EXPLAIN and PRAGMA statements are allowed (got %s)" type)))
-    
-    (duckdb--query-execute conn sql 0 win-config edit-buf db-ptr db-path)))
 
+    (duckdb--query-execute conn sql 0 win-config edit-buf db-ptr db-path)))
 (defun duckdb--query-execute (conn sql offset win-config edit-buf db-ptr db-path)
   "Execute SQL and display results."
   (let* ((limited-sql (format "%s LIMIT %d OFFSET %d" sql duckdb-query-limit offset))
