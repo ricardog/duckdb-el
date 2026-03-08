@@ -649,7 +649,7 @@ as the table name without prompting."
           (insert "  ")
           (insert (propertize "[Quit (q)]" 'face 'link 'help-echo "Click or press 'q' to close results" 'mouse-face 'highlight 'duckdb-action 'quit))
           (insert "\n\n")
-          (insert "-- Query: " sql "\n")
+          (insert "-- Query: \n" sql "\n")
           (insert "-- Showing rows " (number-to-string offset) " to " (number-to-string (+ offset (length rows))) "\n")
           (add-text-properties start (point) '(read-only t)))))
     
