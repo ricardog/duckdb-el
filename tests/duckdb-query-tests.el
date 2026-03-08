@@ -187,19 +187,4 @@
 
       (kill-buffer edit-buf))))
 
-(ert-deftest duckdb-format-error-message-test ()
-  "Test duckdb--format-error-message with escaped quotes."
-  (let* ((raw-msg "Binder Error: Referenced column \"specie\" not found")
-         ;; A real error object is (SYMBOL . DATA-LIST)
-         (err-obj (list 'duckdb-error raw-msg))
-         (formatted (duckdb--format-error-message err-obj)))
-    ;; It should use raw-msg directly because it's a string in the data list
-    (should (string= formatted raw-msg))
-
-    ;; Also test the fallback logic for when we only have the error-message-string output
-    (let* ((ems-output (format "DuckDB error: %S" raw-msg))
-           ;; Passing something that is NOT an error list to force the fallback
-           (formatted-fallback (duckdb--format-error-message ems-output)))
-      (should (string= formatted-fallback raw-msg)))))
-
 (provide 'duckdb-query-tests)

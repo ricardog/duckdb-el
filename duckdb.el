@@ -576,37 +576,18 @@ as the table name without prompting."
          (win-config duckdb--query-window-config)
          (edit-buf (current-buffer)))
     ;; Check query type
-    (let ((type (duckdb-query-type conn sql)))
-      (unless (member type '(SELECT DESCRIBE EXPLAIN PRAGMA))
-        (error "Only SELECT, DESCRIBE, EXPLAIN and PRAGMA statements are allowed (got %s)" type)))
-
+    (condition-case err
+	(let ((type (duckdb-query-type conn sql)))
+	  (unless (member type '(SELECT DESCRIBE EXPLAIN PRAGMA))
+            (error "Only SELECT, DESCRIBE, EXPLAIN and PRAGMA statements are allowed (got %s)" type)))
+      (duckdb-error
+       (error "%s" (car (cdr err)))
+       ))
     (duckdb--query-execute conn sql 0 win-config edit-buf db-ptr db-path)))
-
-(defun duckdb--format-error-message (err)
-  "Format the error message from ERR, stripping redundant bits and unescaping."
-  (let ((data (and (listp err) (cdr err))))
-    (if (and (listp data) (stringp (car data)))
-        ;; If we have the raw string in the error data, use it directly.
-        ;; This avoids the quoting added by error-message-string.
-        (car data)
-      ;; Fallback: clean up error-message-string output
-      (let ((msg (if (stringp err) err (error-message-string err))))
-        ;; Remove redundant "DuckDB error: " prefix if it exists
-        (when (string-match "\\`DuckDB error: \\(.*\\)" msg)
-          (setq msg (match-string 1 msg)))
-        ;; Use a temporary buffer to unquote/unescape (the "read" trick)
-        (with-temp-buffer
-          (insert msg)
-          (goto-char (point-min))
-          (condition-case nil
-              (let ((val (read (current-buffer))))
-                (if (stringp val) val msg))
-            (error msg)))))))
 
 (defun duckdb--query-execute (conn sql offset win-config edit-buf db-ptr db-path)
   "Execute SQL and display results."
-  (condition-case err
-      (let* ((limited-sql (format "%s LIMIT %d OFFSET %d" sql duckdb-query-limit offset))
+  (let* ((limited-sql (format "%s LIMIT %d OFFSET %d" sql duckdb-query-limit offset))
              (results (duckdb-select-columns conn limited-sql))
              (data-plist (plist-get results :data))
              (types-plist (plist-get results :types))
@@ -619,14 +600,7 @@ as the table name without prompting."
                             collect (cl-loop for col-vec in data
                                              for type in types
                                              collect (duckdb--format-value (aref col-vec r) type)))))
-        (duckdb--query-render-results columns rows sql offset win-config edit-buf conn db-ptr db-path))
-    (duckdb-error
-     (let ((msg (duckdb--format-error-message err)))
-       (message "DuckDB Error: %s" msg)
-       (signal (car err) (cdr err))))
-    (error
-     (message "Error: %s" (error-message-string err))
-     (signal (car err) (cdr err)))))
+    (duckdb--query-render-results columns rows sql offset win-config edit-buf conn db-ptr db-path)))
 
 (defun duckdb--query-render-results (columns rows sql offset win-config edit-buf conn db-ptr db-path)
   "Render query results."
