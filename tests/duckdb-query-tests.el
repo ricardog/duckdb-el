@@ -26,13 +26,13 @@
             (duckdb-browse-mode)
             (setq-local duckdb-current-connection conn)
             (duckdb-browse-query))
-          
+
           (should (bufferp query-buf))
           (with-current-buffer query-buf
             (should (eq major-mode 'duckdb-query-edit-mode))
             (should (eq duckdb-current-connection conn))
             (should (string-match "SELECT" (buffer-string))))
-          
+
           (kill-buffer query-buf)
           (kill-buffer browse-buf))))))
 
@@ -55,7 +55,7 @@
         (erase-buffer)
         (insert "DELETE FROM test")
         (should-error (duckdb-query-edit-run) :type 'error)
-        
+
         (erase-buffer)
         (insert "SELECT 1")
         ;; Mock duckdb--query-execute to avoid actual execution issues with missing tables
@@ -75,7 +75,7 @@
         (with-current-buffer results-buf
           ;; Verify major mode is preserved and not overwritten by tabulated-list-mode
           (should (eq major-mode 'duckdb-query-results-mode))
-          
+
           ;; Check standard global/special-mode bindings (if present in environment)
           (let ((mx (key-binding (kbd "M-x")))
 		(my (key-binding (kbd "M-y")))
@@ -84,7 +84,7 @@
             (should (eq my 'yank-pop))
             ;; 'q' is bound in special-mode and overridden in our results mode
             (should (eq q 'duckdb-query-results-quit)))
-          
+
           ;; Check mode-specific bindings that were reported as missing
           (should (eq (key-binding (kbd "e")) 'duckdb-query-results-edit))
           (should (eq (key-binding (kbd "m")) 'duckdb-query-results-fetch-more)))
@@ -102,21 +102,21 @@
       (with-current-buffer results-buf
         (duckdb-query-results-mode)
         (setq-local duckdb--query-edit-buffer edit-buf))
-      
+
       ;; Test swap to edit
       (with-temp-buffer
         (let ((win (display-buffer results-buf)))
           (with-selected-window win
             (duckdb-query-results-edit)
             (should (eq (window-buffer win) edit-buf)))))
-      
+
       ;; Test swap back to results (simulated via render call)
       (with-temp-buffer
         (let ((win (display-buffer edit-buf)))
           (with-selected-window win
             (duckdb--query-render-results '("col") '(("val")) "SELECT 1" 0 nil edit-buf conn nil nil)
             (should (eq (window-buffer win) (get-buffer "*DuckDB Query Results*"))))))
-      
+
       (kill-buffer edit-buf)
       (kill-buffer results-buf))))
 
@@ -140,12 +140,12 @@
   (with-duckdb conn ":memory:"
     (duckdb-execute conn "CREATE TABLE users (id INTEGER, name VARCHAR)")
     (duckdb-execute conn "CREATE TABLE posts (id INTEGER, title VARCHAR)")
-    
+
     (let ((buf (get-buffer-create "*DuckDB Completion Test*")))
       (with-current-buffer buf
         (duckdb-query-edit-mode)
         (setq-local duckdb-current-connection conn)
-        
+
         ;; 1. Test all completions (no prefix)
         (let ((res (duckdb-completion-at-point)))
           (should res)
@@ -155,7 +155,7 @@
               (should (member "posts" completions))
               (should (member "name" completions))
               (should (member "title" completions)))))
-        
+
         ;; 2. Test table.column completion
         (insert "users.")
         (let ((res (duckdb-completion-at-point)))
@@ -174,17 +174,17 @@
       (with-current-buffer edit-buf
         (duckdb-query-edit-mode)
         (setq-local duckdb-current-connection conn))
-      
+
       ;; Expect duckdb-error when executing invalid SQL
       (let ((caught nil))
         (condition-case err
             (duckdb--query-execute conn "SELECT * FROM non_existent_table" 0 nil edit-buf nil nil)
-          (duckdb-error 
+          (duckdb-error
            (setq caught t)
            ;; Check that the error message contains the table name
            (should (string-match-p "non_existent_table" (error-message-string err)))))
         (should caught))
-      
+
       (kill-buffer edit-buf))))
 
 (ert-deftest duckdb-format-error-message-test ()
@@ -195,7 +195,7 @@
          (formatted (duckdb--format-error-message err-obj)))
     ;; It should use raw-msg directly because it's a string in the data list
     (should (string= formatted raw-msg))
-    
+
     ;; Also test the fallback logic for when we only have the error-message-string output
     (let* ((ems-output (format "DuckDB error: %S" raw-msg))
            ;; Passing something that is NOT an error list to force the fallback

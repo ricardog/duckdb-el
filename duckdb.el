@@ -133,10 +133,10 @@ Optional PARAMS are bound to the query."
               (count (cadr table-info))
               (start (point)))
           (insert (format "%-20s %15s\n" name count))
-          (add-text-properties start (1- (point)) 
-                               `(duckdb-table-name ,name 
+          (add-text-properties start (1- (point))
+                               `(duckdb-table-name ,name
                                  face duckdb-browse-table-name
-                                 mouse-face highlight 
+                                 mouse-face highlight
                                  help-echo "RET: toggle data, c: toggle columns, Q: query, q: quit")))))
     (setq duckdb--expanded-table nil)
     (setq duckdb--expanded-overlay nil)
@@ -581,6 +581,7 @@ as the table name without prompting."
         (error "Only SELECT, DESCRIBE, EXPLAIN and PRAGMA statements are allowed (got %s)" type)))
 
     (duckdb--query-execute conn sql 0 win-config edit-buf db-ptr db-path)))
+
 (defun duckdb--format-error-message (err)
   "Format the error message from ERR, stripping redundant bits and unescaping."
   (let ((data (and (listp err) (cdr err))))
@@ -641,7 +642,7 @@ as the table name without prompting."
         (setq-local duckdb--query-offset offset)
         (setq-local duckdb--query-window-config win-config)
         (setq-local duckdb--query-edit-buffer edit-buf)
-        
+
         (if (and (fboundp 'vtable-insert) (featurep 'vtable))
             (vtable-insert :columns columns
                            :objects (mapcar (lambda (row)
@@ -662,7 +663,7 @@ as the table name without prompting."
           (tabulated-list-init-header)
           (tabulated-list-print t)
           (goto-char (point-max)))
-        
+
         (let ((start (point)))
           (insert "\n")
           (insert (propertize "[Fetch More (m)]" 'face 'link 'help-echo "Click or press 'm' to fetch more rows" 'mouse-face 'highlight 'duckdb-action 'fetch-more))
@@ -674,7 +675,7 @@ as the table name without prompting."
           (insert "-- Query: \n" sql "\n")
           (insert "-- Showing rows " (number-to-string offset) " to " (number-to-string (+ offset (length rows))) "\n")
           (add-text-properties start (point) '(read-only t)))))
-    
+
     (let ((edit-win (get-buffer-window edit-buf)))
       (if edit-win
           (with-selected-window edit-win

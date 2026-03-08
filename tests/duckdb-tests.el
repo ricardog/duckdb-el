@@ -199,7 +199,7 @@
     (duckdb-execute conn "CREATE TABLE test (data VARCHAR);")
     ;; Use from_hex to get real binary data into a VARCHAR
     (duckdb-execute conn "INSERT INTO test SELECT from_hex('07832F')::VARCHAR;")
-    
+
     (let* ((results (duckdb-select-columns conn "SELECT * FROM test;"))
            (data (plist-get results :data))
            (val (aref (plist-get data :data) 0)))
@@ -232,7 +232,7 @@
     (duckdb-execute conn "INSERT INTO t1 VALUES (1), (2), (3)")
     (duckdb-execute conn "CREATE TABLE t2 (name varchar)")
     (duckdb-execute conn "INSERT INTO t2 VALUES ('a')")
-    
+
     (let ((tables (duckdb--get-tables-with-counts conn)))
       (should (equal (length tables) 2))
       (should (equal (nth 0 tables) '("t1" 3)))
@@ -244,7 +244,7 @@
     (duckdb-execute conn "CREATE TABLE zzz (id int)")
     (duckdb-execute conn "CREATE TABLE aaa (id int)")
     (duckdb-execute conn "CREATE TABLE mmm (id int)")
-    
+
     (let ((tables (duckdb--get-tables-with-counts conn)))
       (should (equal (mapcar #'car tables) '("aaa" "mmm" "zzz"))))))
 
@@ -253,7 +253,7 @@
   (with-duckdb conn ":memory:"
     (duckdb-execute conn "CREATE TABLE t1 (id int, val varchar)")
     (duckdb-execute conn "INSERT INTO t1 VALUES (1, 'apple'), (2, 'banana')")
-    
+
     (let ((preview (duckdb--get-table-preview conn "t1")))
       (should (string-match "id" preview))
       (should (string-match "val" preview))

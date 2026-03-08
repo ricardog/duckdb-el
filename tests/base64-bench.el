@@ -7,13 +7,13 @@
   (let ((data (make-string size 0 nil)))
     (dotimes (i size) (aset data i (random 256)))
     (message "Benchmarking size: %d bytes" size)
-    
+
     ;; Built-in encode
     (let ((start (float-time)))
       (dotimes (_ 10) (base64-encode-string data t))
       (let ((elapsed (/ (- (float-time) start) 10.0)))
         (message "  Emacs built-in encode: %.6f s (%.2f MB/s)" elapsed (/ size (max 0.000001 (* elapsed 1024.0 1024.0))))))
-    
+
     ;; Optimized encode
     (let ((start (float-time)))
       (dotimes (_ 10) (duckdb-base64-encode data))

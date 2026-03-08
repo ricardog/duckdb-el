@@ -56,20 +56,20 @@ base64_encode_neon(const unsigned char *src, size_t len, char *dst) {
 
     while (i + 48 <= len) {
         uint8x16x3_t in = vld3q_u8(src + i);
-        
+
         uint8x16_t c0 = vshrq_n_u8(in.val[0], 2);
         uint8x16_t c1 = vorrq_u8(vshlq_n_u8(vandq_u8(in.val[0], mask3), 4), vshrq_n_u8(in.val[1], 4));
         uint8x16_t c2 = vorrq_u8(vshlq_n_u8(vandq_u8(in.val[1], maskF), 2), vshrq_n_u8(in.val[2], 6));
         uint8x16_t c3 = vandq_u8(in.val[2], vdupq_n_u8(0x3F));
-        
+
         uint8x16x4_t out;
         out.val[0] = lookup_neon(c0, table0, table1, table2, table3);
         out.val[1] = lookup_neon(c1, table0, table1, table2, table3);
         out.val[2] = lookup_neon(c2, table0, table1, table2, table3);
         out.val[3] = lookup_neon(c3, table0, table1, table2, table3);
-        
+
         vst4q_u8((uint8_t*)(dst + j), out);
-        
+
         i += 48;
         j += 64;
     }
@@ -110,23 +110,23 @@ size_t
 base64_decode_simd(const char *src, size_t len, unsigned char *dst) {
     if (len == 0) return 0;
     if (len % 4 != 0) return (size_t)-1;
-    
+
     size_t j = 0;
     for (size_t i = 0; i < len; i += 4) {
         signed char a = decoding_table[(unsigned char)src[i]];
         signed char b = decoding_table[(unsigned char)src[i+1]];
         signed char c = decoding_table[(unsigned char)src[i+2]];
         signed char d = decoding_table[(unsigned char)src[i+3]];
-        
+
         if (a == -1 || b == -1 || (src[i+2] != '=' && c == -1) || (src[i+3] != '=' && d == -1)) {
             return (size_t)-1;
         }
-        
-        uint32_t triple = ((uint32_t)(a & 0x3F) << 18) | 
-                          ((uint32_t)(b & 0x3F) << 12) | 
-                          ((uint32_t)(c & 0x3F) << 6) | 
+
+        uint32_t triple = ((uint32_t)(a & 0x3F) << 18) |
+                          ((uint32_t)(b & 0x3F) << 12) |
+                          ((uint32_t)(c & 0x3F) << 6) |
                           (uint32_t)(d & 0x3F);
-        
+
         dst[j++] = (triple >> 16) & 0xFF;
         if (src[i+2] != '=') dst[j++] = (triple >> 8) & 0xFF;
         if (src[i+3] != '=') dst[j++] = triple & 0xFF;

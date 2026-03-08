@@ -49,7 +49,7 @@ make_blob_value(emacs_env *env, const char *data, ptrdiff_t length)
   size_t out_len = base64_encode_len(length);
   char *b64 = malloc(out_len + 1);
   if (!b64) return env->intern(env, "nil");
-  
+
   size_t actual_len = base64_encode_simd((const unsigned char *)data, length, b64);
   emacs_value b64_str = env->make_string(env, b64, actual_len);
   free(b64);
@@ -303,7 +303,7 @@ bind_parameters(emacs_env *env, duckdb_prepared_statement stmt, emacs_value para
   emacs_value null_val = env->funcall(env, env->intern(env, "symbol-value"), 1, &null_symbol_sym);
 
   idx_t nparams = duckdb_nparams(stmt);
-  
+
   for (idx_t i = 1; i <= nparams; i++)
   {
     if (env->eq(env, params, nil_sym))
@@ -352,14 +352,14 @@ bind_parameters(emacs_env *env, duckdb_prepared_statement stmt, emacs_value para
           /* Try to decode as base64 first for compatibility if it looks like base64 */
           size_t out_len = (size_t)-1;
           unsigned char *decoded = NULL;
-          
+
           if (str_len % 4 == 0) {
             decoded = malloc(base64_decode_len(str_len));
             if (decoded) {
                out_len = base64_decode_simd(buf, str_len, decoded);
             }
           }
-          
+
           if (out_len != (size_t)-1)
           {
             state = duckdb_bind_blob(stmt, i, decoded, out_len);
@@ -833,12 +833,12 @@ Fduckdb_select_columns(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void
     const char *col_name = duckdb_column_name(&result, idx);
     duckdb_type type = duckdb_column_type(&result, idx);
     const char *type_name = duckdb_type_name(type);
-    
+
     char *kw_name = malloc(strlen(col_name) + 2);
     sprintf(kw_name, ":%s", col_name);
     emacs_value key = env->intern(env, kw_name);
     free(kw_name);
-    
+
     emacs_value val = col_vectors[idx];
     emacs_value type_val = env->make_string(env, type_name, strlen(type_name));
 
@@ -1038,7 +1038,7 @@ Fduckdb_select_async(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *
   ctx->state = DuckDBSuccess;
   ctx->error_msg = NULL;
   ctx->is_done = false;
-  
+
   pthread_t thread;
   if (pthread_create(&thread, NULL, async_worker, ctx) != 0) {
     env->free_global_ref(env, ctx->callback_ref);
@@ -1068,7 +1068,7 @@ Fduckdb_async_poll(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *da
 
   if (ctx->state == DuckDBError) {
       emacs_value error_sym = env->intern(env, "duckdb-error");
-      emacs_value msg = env->make_string(env, ctx->error_msg ? ctx->error_msg : "Async query failed", 
+      emacs_value msg = env->make_string(env, ctx->error_msg ? ctx->error_msg : "Async query failed",
                                         ctx->error_msg ? strlen(ctx->error_msg) : 18);
       env->non_local_exit_signal(env, error_sym, msg);
       return env->intern(env, "nil");
@@ -1178,18 +1178,18 @@ Fduckdb_base64_encode(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void 
 {
   (void)nargs;
   (void)data;
-  
+
   ptrdiff_t len = 0;
   if (!env->copy_string_contents(env, args[0], NULL, &len)) return env->intern(env, "nil");
-  
+
   char *buf = malloc(len);
   env->copy_string_contents(env, args[0], buf, &len);
   size_t str_len = len - 1; /* Exclude null terminator */
-  
+
   size_t out_max = base64_encode_len(str_len);
   char *out = malloc(out_max + 1);
   size_t actual = base64_encode_simd((const unsigned char *)buf, str_len, out);
-  
+
   emacs_value res = env->make_string(env, out, actual);
   free(buf);
   free(out);
@@ -1201,26 +1201,26 @@ Fduckdb_base64_decode(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void 
 {
   (void)nargs;
   (void)data;
-  
+
 #if EMACS_MODULE_API_VERSION >= 28
   ptrdiff_t len = 0;
   if (!env->copy_string_contents(env, args[0], NULL, &len)) return env->intern(env, "nil");
-  
+
   char *buf = malloc(len);
   env->copy_string_contents(env, args[0], buf, &len);
   size_t str_len = len - 1; /* Exclude null terminator */
-  
+
   size_t out_max = base64_decode_len(str_len);
   unsigned char *out = malloc(out_max);
   size_t actual = base64_decode_simd(buf, str_len, out);
-  
+
   if (actual == (size_t)-1) {
     free(buf);
     free(out);
     SIGNAL_ERROR(env, "duckdb-error", "Base64 decoding failed");
     return env->intern(env, "nil");
   }
-  
+
   emacs_value res = env->make_unibyte_string(env, (const char *)out, actual);
   free(buf);
   free(out);
