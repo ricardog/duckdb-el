@@ -337,29 +337,45 @@ Optional PARAMS are bound to the query."
   "Open DuckDB database at PATH and browse its tables."
   (interactive (list (read-string "DuckDB Path: " ":memory:" 'duckdb-path-history ":memory:")))
   (condition-case err
-      (let* ((db (duckdb-open path))
-             (conn (duckdb-connect db))
-             (buf (get-buffer-create (format "*DuckDB: %s*" path))))
-        (with-current-buffer buf
-          (duckdb-browse-mode)
-          (setq-local duckdb-current-connection conn)
-          (setq-local duckdb--db-ptr db)
-          (setq-local duckdb--db-path path)
-          (duckdb-browse-refresh))
-        (switch-to-buffer buf))
+      (let ((db nil)
+            (conn nil)
+            (buf nil))
+        (unwind-protect
+            (progn
+              (setq db (duckdb-open path))
+              (setq conn (duckdb-connect db))
+              (setq buf (get-buffer-create (format "*DuckDB: %s*" path)))
+              (with-current-buffer buf
+                (duckdb-browse-mode)
+                (setq-local duckdb-current-connection conn)
+                (setq-local duckdb--db-ptr db)
+                (setq-local duckdb--db-path path)
+                ;; Hand over ownership to the buffer
+                (setq db nil
+                      conn nil)
+                (duckdb-browse-refresh))
+              (switch-to-buffer buf)
+              (setq buf nil)) ;; Success, don't kill buffer
+          (when conn (ignore-errors (duckdb-disconnect conn)))
+          (when db (ignore-errors (duckdb-close db)))
+          (when (buffer-live-p buf) (kill-buffer buf))))
     (duckdb-error
      (error "%s" (cadr err)))))
 
 (defmacro with-duckdb (var path &rest body)
   "Open DuckDB at PATH, bind connection to VAR, and execute BODY."
   (declare (indent 2))
-  (let ((db-sym (make-symbol "db")))
-    `(let* ((,db-sym (duckdb-open ,path))
-            (,var (duckdb-connect ,db-sym)))
+  (let ((db-sym (make-symbol "db"))
+        (conn-sym (make-symbol "conn")))
+    `(let ((,db-sym (duckdb-open ,path))
+           (,conn-sym nil))
        (unwind-protect
-           (progn ,@body)
-         (duckdb-disconnect ,var)
-         (duckdb-close ,db-sym)))))
+           (progn
+             (setq ,conn-sym (duckdb-connect ,db-sym))
+             (let ((,var ,conn-sym))
+               ,@body))
+         (when ,conn-sym (ignore-errors (duckdb-disconnect ,conn-sym)))
+         (when ,db-sym (ignore-errors (duckdb-close ,db-sym)))))))
 
 (defun duckdb--get-db-or-path ()
   "Get the current connection or prompt for a path."
@@ -486,47 +502,55 @@ as the table name without prompting."
              (file (buffer-file-name buf))
              (db-ptr nil)
              (conn-ptr nil)
-             (is-new-conn nil))
-        (if (stringp db-or-path)
-            (setq db-ptr (duckdb-open db-or-path)
-                  conn-ptr (duckdb-connect db-ptr)
-                  is-new-conn t)
-          (setq conn-ptr db-or-path))
+             (is-new-conn nil)
+             (browser-buf nil)
+             (success nil))
         (unwind-protect
-            (let ((exists (member table-name (duckdb-get-tables conn-ptr))))
-              (if file
-                  (if exists
-                      (duckdb-execute conn-ptr (format "COPY %s FROM '%s' (AUTO_DETECT TRUE)" table-name file))
-                    (duckdb-execute conn-ptr (format "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s')" table-name file)))
-                ;; If not a file, write to a temp file
-                (let ((temp-file (make-temp-file "duckdb-insert-")))
-                  (with-current-buffer buf
-                    (write-region (point-min) (point-max) temp-file))
-                  (unwind-protect
-                      (if exists
-                          (duckdb-execute conn-ptr (format "COPY %s FROM '%s' (AUTO_DETECT TRUE)" table-name temp-file))
-                        (duckdb-execute conn-ptr (format "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s')" table-name temp-file)))
-                    (delete-file temp-file)))))
-          ;; If an error occurred and we just opened the connection, we should probably close it
-          ;; but if we are returning it, we keep it open.
-          )
-        (when (called-interactively-p 'any)
-          ;; If we just opened a new database, or have the path, open a browser
-          (let ((path (if (stringp db-or-path) db-or-path duckdb--db-path))
-                (db (or db-ptr duckdb--db-ptr)))
-            (if db
-                (let* ((new-conn (duckdb-connect db))
-                       (buf (get-buffer-create (format "*DuckDB: %s*" (or path "memory")))))
-                  (with-current-buffer buf
-                    (duckdb-browse-mode)
-                    (setq-local duckdb-current-connection new-conn)
-                    (setq-local duckdb--db-ptr db)
-                    (setq-local duckdb--db-path path)
-                    (duckdb-browse-refresh))
-                  (pop-to-buffer buf))
-              (when (stringp path)
-                (duckdb-mode-open-file path)))))
-        conn-ptr)
+            (progn
+              (if (stringp db-or-path)
+                  (progn
+                    (setq db-ptr (duckdb-open db-or-path)
+                          conn-ptr (duckdb-connect db-ptr)
+                          is-new-conn t))
+                (setq conn-ptr db-or-path))
+              (let ((exists (member table-name (duckdb-get-tables conn-ptr))))
+                (if file
+                    (if exists
+                        (duckdb-execute conn-ptr (format "COPY %s FROM '%s' (AUTO_DETECT TRUE)" table-name file))
+                      (duckdb-execute conn-ptr (format "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s')" table-name file)))
+                  ;; If not a file, write to a temp file
+                  (let ((temp-file (make-temp-file "duckdb-insert-")))
+                    (with-current-buffer buf
+                      (write-region (point-min) (point-max) temp-file))
+                    (unwind-protect
+                        (if exists
+                            (duckdb-execute conn-ptr (format "COPY %s FROM '%s' (AUTO_DETECT TRUE)" table-name temp-file))
+                          (duckdb-execute conn-ptr (format "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s')" table-name temp-file)))
+                      (delete-file temp-file)))))
+              (when (called-interactively-p 'any)
+                ;; If we just opened a new database, or have the path, open a browser
+                (let ((path (if (stringp db-or-path) db-or-path duckdb--db-path))
+                      (db (or db-ptr duckdb--db-ptr)))
+                  (if db
+                      (let* ((new-conn (duckdb-connect db)))
+                        (setq browser-buf (get-buffer-create (format "*DuckDB: %s*" (or path "memory"))))
+                        (with-current-buffer browser-buf
+                          (duckdb-browse-mode)
+                          (setq-local duckdb-current-connection new-conn)
+                          (setq-local duckdb--db-ptr db)
+                          (setq-local duckdb--db-path path)
+                          ;; Browser now owns db-ptr if it was new
+                          (when is-new-conn (setq db-ptr nil))
+                          (duckdb-browse-refresh))
+                        (pop-to-buffer browser-buf))
+                    (when (stringp path)
+                      (duckdb-mode-open-file path)))))
+              (setq success t)
+              conn-ptr)
+          (unless success
+            (when (buffer-live-p browser-buf) (kill-buffer browser-buf))
+            (when (and is-new-conn conn-ptr) (ignore-errors (duckdb-disconnect conn-ptr)))
+            (when db-ptr (ignore-errors (duckdb-close db-ptr))))))
     (duckdb-error
      (error "%s" (cadr err)))))
 
