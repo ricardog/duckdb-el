@@ -1066,31 +1066,42 @@ Fduckdb_async_poll(emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *da
   async_ctx *ctx = (async_ctx *)env->get_user_ptr(env, args[0]);
   if (!ctx->is_done) return env->intern(env, "nil");
 
-  if (ctx->state == DuckDBError) {
-      emacs_value error_sym = env->intern(env, "duckdb-error");
-      emacs_value msg = env->make_string(env, ctx->error_msg ? ctx->error_msg : "Async query failed",
-                                        ctx->error_msg ? strlen(ctx->error_msg) : 18);
-      env->non_local_exit_signal(env, error_sym, msg);
-      return env->intern(env, "nil");
-  }
-
-  /* Convert result to Lisp list of lists */
-  idx_t row_count = duckdb_row_count(&ctx->result);
   emacs_value nil_sym = env->intern(env, "nil");
   emacs_value cons_sym = env->intern(env, "cons");
   emacs_value null_symbol_sym = env->intern(env, "duckdb-null-symbol");
   emacs_value null_val = env->funcall(env, env->intern(env, "symbol-value"), 1, &null_symbol_sym);
 
+  emacs_value status_plist = nil_sym;
   emacs_value rows_list = nil_sym;
-  for (idx_t r = row_count; r > 0; r--)
-  {
-    idx_t row = r - 1;
-    emacs_value row_list = convert_row_to_list(env, &ctx->result, row, null_val);
-    rows_list = env->funcall(env, cons_sym, 2, (emacs_value[]){row_list, rows_list});
+
+  if (ctx->state == DuckDBError) {
+      /* Construct (:error (duckdb-error . "message")) */
+      emacs_value error_sym = env->intern(env, "duckdb-error");
+      emacs_value msg = env->make_string(env, ctx->error_msg ? ctx->error_msg : "Async query failed",
+                                        ctx->error_msg ? strlen(ctx->error_msg) : 18);
+      emacs_value error_cons = env->funcall(env, cons_sym, 2, (emacs_value[]){error_sym, msg});
+      
+      status_plist = env->funcall(env, cons_sym, 2, (emacs_value[]){error_cons, status_plist});
+      status_plist = env->funcall(env, cons_sym, 2, (emacs_value[]){env->intern(env, ":error"), status_plist});
+  } else {
+      /* Convert result to Lisp list of lists */
+      idx_t row_count = duckdb_row_count(&ctx->result);
+      for (idx_t r = row_count; r > 0; r--)
+      {
+        idx_t row = r - 1;
+        emacs_value row_list = convert_row_to_list(env, &ctx->result, row, null_val);
+        rows_list = env->funcall(env, cons_sym, 2, (emacs_value[]){row_list, rows_list});
+      }
+
+      /* Add :rows-affected */
+      int64_t rows_changed = duckdb_rows_changed(&ctx->result);
+      status_plist = env->funcall(env, cons_sym, 2, (emacs_value[]){env->make_integer(env, rows_changed), status_plist});
+      status_plist = env->funcall(env, cons_sym, 2, (emacs_value[]){env->intern(env, ":rows-affected"), status_plist});
   }
 
-  /* Call the callback */
-  env->funcall(env, ctx->callback_ref, 1, &rows_list);
+  /* Call the callback with (status results) */
+  emacs_value cb_args[2] = { status_plist, rows_list };
+  env->funcall(env, ctx->callback_ref, 2, cb_args);
 
   /* Free the global reference to the callback */
   env->free_global_ref(env, ctx->callback_ref);
@@ -1315,7 +1326,7 @@ emacs_module_init(struct emacs_runtime *ert)
   env->funcall(env, env->intern(env, "fset"), 2, (emacs_value[]){ step_sym, step_func });
 
   /* Register Fduckdb_select_async */
-  emacs_value select_async_func = env->make_function(env, 3, 4, Fduckdb_select_async, "Execute a SQL query asynchronously.", NULL);
+  emacs_value select_async_func = env->make_function(env, 3, 4, Fduckdb_select_async, "Execute a SQL query asynchronously. Callback is called with (status results).", NULL);
   emacs_value select_async_sym = env->intern(env, "duckdb--select-async");
   env->funcall(env, env->intern(env, "fset"), 2, (emacs_value[]){ select_async_sym, select_async_func });
 

@@ -54,9 +54,6 @@
       (condition-case err
           (when (duckdb-async-poll ctx)
             (push ctx completed))
-        (duckdb-error
-         (message "DuckDB Async Error: %s" (cdr err))
-         (push ctx completed))
         (error
          (message "Error during DuckDB async poll: %S" err)
          (push ctx completed))))
@@ -73,11 +70,16 @@
 
 (defun duckdb-select-async (conn-ptr sql callback &optional params)
   "Execute SQL query asynchronously on CONN-PTR and call CALLBACK with results.
+CALLBACK is called as (status results), where status is a plist
+containing :error or :rows-affected.
 Optional PARAMS are bound to the query."
-  (let ((ctx (duckdb--select-async conn-ptr sql callback params)))
-    (when ctx
-      (push ctx duckdb--async-queries)
-      ctx)))
+  (condition-case err
+      (let ((ctx (duckdb--select-async conn-ptr sql callback params)))
+        (when ctx
+          (push ctx duckdb--async-queries)
+          ctx))
+    (duckdb-error
+     (error "%s" (error-message-string err)))))
 
 ;;; High-level Wrapper
 
@@ -356,7 +358,9 @@ Optional PARAMS are bound to the query."
                       conn nil)
                 (duckdb-browse-refresh))
               (switch-to-buffer buf)
-              (setq buf nil)) ;; Success, don't kill buffer
+              (let ((res buf))
+                (setq buf nil)
+                res)) ;; Success, return buffer and don't kill it
           (when conn (ignore-errors (duckdb-disconnect conn)))
           (when db (ignore-errors (duckdb-close db)))
           (when (buffer-live-p buf) (kill-buffer buf))))

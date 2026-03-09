@@ -110,9 +110,11 @@
     (duckdb-execute conn "CREATE TABLE test (id INTEGER, name VARCHAR);")
     (duckdb-execute conn "INSERT INTO test VALUES (1, 'Alice'), (2, 'Bob');")
     (let ((done nil)
-          (results nil))
+          (results nil)
+          (status nil))
       (duckdb-select-async conn "SELECT * FROM test ORDER BY id;"
-                           (lambda (res)
+                           (lambda (s res)
+                             (setq status s)
                              (setq results res)
                              (setq done t)))
       (let ((timeout 50)) ; 5 seconds total
@@ -120,16 +122,32 @@
           (read-event nil nil 0.1)
           (setq timeout (1- timeout))))
       (should done)
+      (should (null (plist-get status :error)))
       (should (equal results '((1 "Alice") (2 "Bob")))))))
 
 (ert-deftest duckdb-select-async-error-test ()
-  "Test selecting data asynchronously with error."
+  "Test selecting data asynchronously with error (startup error)."
+  (with-duckdb conn ":memory:"
+    (should-error (duckdb-select-async conn "SELECT * FROM non_existent_table;"
+                                       (lambda (_s _res) nil)))))
+
+(ert-deftest duckdb-select-async-runtime-error-test ()
+  "Test selecting data asynchronously with runtime error (poll error)."
   (with-duckdb conn ":memory:"
     (let ((done nil)
-          (error-caught nil))
-      (should-error (duckdb-select-async conn "SELECT * FROM non_existent_table;"
-                                         (lambda (_) (setq done t)))
-                    :type 'duckdb-error))))
+          (status nil))
+      (duckdb-select-async conn "SELECT error('Intentional Error')"
+                           (lambda (s _res)
+                             (setq status s)
+                             (setq done t)))
+      (let ((timeout 50))
+        (while (and (not done) (> timeout 0))
+          (read-event nil nil 0.1)
+          (setq timeout (1- timeout))))
+      (should done)
+      (should (plist-get status :error))
+      (should (eq (car (plist-get status :error)) 'duckdb-error))
+      (should (string-match "Intentional Error" (cdr (plist-get status :error)))))))
 
 (ert-deftest duckdb-get-tables-columns-test ()
   "Test duckdb-get-tables and duckdb-get-columns."

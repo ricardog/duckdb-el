@@ -136,4 +136,11 @@
                 (should (string= (cadr err) "Fetch More Error")))))
         (kill-buffer buf)))))
 
+(ert-deftest duckdb-select-async-start-error-test ()
+  "Test that duckdb-select-async handles startup errors gracefully."
+  (with-duckdb conn ":memory:"
+    (let ((err (should-error (duckdb-select-async conn "INVALID SQL" (lambda (_s _r) nil)))))
+      (should (eq (car err) 'error))
+      (should (string-match "syntax error" (cadr err))))))
+
 (provide 'duckdb-interactive-error-tests)

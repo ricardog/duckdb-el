@@ -63,8 +63,10 @@ For large datasets, use `duckdb-select-columns` to get results in a high-perform
 Run long-running queries without freezing Emacs:
 ```elisp
 (duckdb-select-async conn "SELECT count(*) FROM big_data;"
-                     (lambda (results)
-                       (message "Query finished! Count: %s" (caar results))))
+                     (lambda (status results)
+                       (if (plist-get status :error)
+                           (message "Query failed: %s" (cdr (plist-get status :error)))
+                         (message "Query finished! Count: %s" (caar results)))))
 ```
 
 ### Interactive Browser

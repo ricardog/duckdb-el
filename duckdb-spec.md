@@ -81,7 +81,12 @@ To ensure memory safety, the module uses Emacs `user_ptr` objects with finalizer
 * `(duckdb-select-async conn-ptr sql callback &optional params)`  
     1. Spawns a background worker thread.
     2. Executes the query without blocking the Emacs UI.
-    3. Upon completion, schedules the `callback` to run in the main thread with the result set.
+    3. Upon completion, schedules the `callback` to run in the main thread.
+    4. The `callback` is called with two arguments: `(status results)`.
+       * `status` is a plist that may contain:
+         * `:error`: A cons cell `(error-symbol . "message")` if the query failed in the background.
+         * `:rows-affected`: An integer indicating how many rows were changed (for DML).
+       * `results` is a list of lists (row-major) containing the query results (if successful).
 
 ---
 
