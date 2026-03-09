@@ -43,10 +43,12 @@ clean:
 test: all
 	LD_LIBRARY_PATH=$(DUCKDB_LIB):$$LD_LIBRARY_PATH $(EMACS) -batch -l tests/test-helper.el -l tests/duckdb-tests.el -f ert-run-tests-batch-and-exit
 	LD_LIBRARY_PATH=$(DUCKDB_LIB):$$LD_LIBRARY_PATH $(EMACS) -batch -l tests/test-helper.el -l tests/duckdb-query-tests.el -f ert-run-tests-batch-and-exit
+	LD_LIBRARY_PATH=$(DUCKDB_LIB):$$LD_LIBRARY_PATH $(EMACS) -batch -l tests/test-helper.el -l tests/duckdb-interactive-error-tests.el -f ert-run-tests-batch-and-exit
 
 asan-test: clean
 	CFLAGS="$(CFLAGS) -fsanitize=address -g3" LDFLAGS="$(LDFLAGS) -fsanitize=address" $(MAKE) all
 	LD_LIBRARY_PATH=$(DUCKDB_LIB):$$LD_LIBRARY_PATH ASAN_OPTIONS=detect_leaks=1 $(EMACS) -batch -l tests/test-helper.el -l tests/duckdb-tests.el -f ert-run-tests-batch-and-exit
 	LD_LIBRARY_PATH=$(DUCKDB_LIB):$$LD_LIBRARY_PATH ASAN_OPTIONS=detect_leaks=1 $(EMACS) -batch -l tests/test-helper.el -l tests/duckdb-query-tests.el -f ert-run-tests-batch-and-exit
+	LD_LIBRARY_PATH=$(DUCKDB_LIB):$$LD_LIBRARY_PATH ASAN_OPTIONS=detect_leaks=1 $(EMACS) -batch -l tests/test-helper.el -l tests/duckdb-interactive-error-tests.el -f ert-run-tests-batch-and-exit
 
 .PHONY: all clean test asan-test

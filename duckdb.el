@@ -121,27 +121,30 @@ Optional PARAMS are bound to the query."
 (defun duckdb-browse-refresh (&optional _ignore-auto _noconfirm)
   "Refresh the table list."
   (interactive)
-  (let ((inhibit-read-only t)
-        (pos (point)))
-    (erase-buffer)
-    (let ((header (format "%-20s %15s\n" "Table Name" "Number of Rows")))
-      (insert (propertize header 'face 'duckdb-browse-header)))
-    (insert (make-string 36 ?-) "\n")
-    (let ((tables (duckdb--get-tables-with-counts duckdb-current-connection)))
-      (dolist (table-info tables)
-        (let ((name (car table-info))
-              (count (cadr table-info))
-              (start (point)))
-          (insert (format "%-20s %15s\n" name count))
-          (add-text-properties start (1- (point))
-                               `(duckdb-table-name ,name
-                                 face duckdb-browse-table-name
-                                 mouse-face highlight
-                                 help-echo "RET: toggle data, c: toggle columns, Q: query, q: quit")))))
-    (setq duckdb--expanded-table nil)
-    (setq duckdb--expanded-overlay nil)
-    (goto-char (min pos (point-max)))
-    (if (< (point) (point-min)) (goto-char (point-min)))))
+  (condition-case err
+      (let ((inhibit-read-only t)
+            (pos (point)))
+        (erase-buffer)
+        (let ((header (format "%-20s %15s\n" "Table Name" "Number of Rows")))
+          (insert (propertize header 'face 'duckdb-browse-header)))
+        (insert (make-string 36 ?-) "\n")
+        (let ((tables (duckdb--get-tables-with-counts duckdb-current-connection)))
+          (dolist (table-info tables)
+            (let ((name (car table-info))
+                  (count (cadr table-info))
+                  (start (point)))
+              (insert (format "%-20s %15s\n" name count))
+              (add-text-properties start (1- (point))
+                                   `(duckdb-table-name ,name
+                                                       face duckdb-browse-table-name
+                                                       mouse-face highlight
+                                                       help-echo "RET: toggle data, c: toggle columns, Q: query, q: quit")))))
+        (setq duckdb--expanded-table nil)
+        (setq duckdb--expanded-overlay nil)
+        (goto-char (min pos (point-max)))
+        (if (< (point) (point-min)) (goto-char (point-min))))
+    (duckdb-error
+     (error "%s" (cadr err)))))
 
 (defun duckdb--get-tables-with-counts (conn)
   "Get all tables in CONN and their row counts, sorted by name."
@@ -160,26 +163,32 @@ Optional PARAMS are bound to the query."
 (defun duckdb-browse-toggle-table ()
   "Toggle the display of the table at point (data preview)."
   (interactive)
-  (let ((table (get-text-property (point) 'duckdb-table-name)))
-    (if (not table)
-        (message "No table at point")
-      (if (and (string= table duckdb--expanded-table)
-               (eq (overlay-get duckdb--expanded-overlay 'duckdb-type) 'data))
-          (duckdb--collapse-table)
-        (duckdb--collapse-table) ; Collapse existing if any
-        (duckdb--expand-table table)))))
+  (condition-case err
+      (let ((table (get-text-property (point) 'duckdb-table-name)))
+        (if (not table)
+            (message "No table at point")
+          (if (and (string= table duckdb--expanded-table)
+                   (eq (overlay-get duckdb--expanded-overlay 'duckdb-type) 'data))
+              (duckdb--collapse-table)
+            (duckdb--collapse-table) ; Collapse existing if any
+            (duckdb--expand-table table))))
+    (duckdb-error
+     (error "%s" (cadr err)))))
 
 (defun duckdb-browse-toggle-columns ()
   "Toggle the display of columns and types for the table at point."
   (interactive)
-  (let ((table (get-text-property (point) 'duckdb-table-name)))
-    (if (not table)
-        (message "No table at point")
-      (if (and (string= table duckdb--expanded-table)
-               (eq (overlay-get duckdb--expanded-overlay 'duckdb-type) 'columns))
-          (duckdb--collapse-table)
-        (duckdb--collapse-table)
-        (duckdb--expand-table-columns table)))))
+  (condition-case err
+      (let ((table (get-text-property (point) 'duckdb-table-name)))
+        (if (not table)
+            (message "No table at point")
+          (if (and (string= table duckdb--expanded-table)
+                   (eq (overlay-get duckdb--expanded-overlay 'duckdb-type) 'columns))
+              (duckdb--collapse-table)
+            (duckdb--collapse-table)
+            (duckdb--expand-table-columns table))))
+    (duckdb-error
+     (error "%s" (cadr err)))))
 
 (defun duckdb--collapse-table ()
   "Collapse currently expanded table."
@@ -293,44 +302,53 @@ Optional PARAMS are bound to the query."
 (defun duckdb-set-connection (path)
   "Set the current DuckDB connection for the buffer to PATH."
   (interactive (list (read-string "DuckDB Path: " ":memory:" 'duckdb-path-history ":memory:")))
-  (let* ((db (duckdb-open path))
-         (conn (duckdb-connect db)))
-    (setq-local duckdb-current-connection conn)
-    (message "Buffer connected to %s" path)))
+  (condition-case err
+      (let* ((db (duckdb-open path))
+             (conn (duckdb-connect db)))
+        (setq-local duckdb-current-connection conn)
+        (message "Buffer connected to %s" path))
+    (duckdb-error
+     (error "%s" (cadr err)))))
 
 (defun duckdb-list-tables (&optional conn-ptr)
   "List all tables in the database for CONN-PTR."
   (interactive (list duckdb-current-connection))
-  (let ((conn (or conn-ptr duckdb-current-connection)))
-    (unless conn
-      (error "No active DuckDB connection"))
-    (let* ((results (duckdb-select-columns conn "SELECT table_name, table_schema, table_type FROM information_schema.tables WHERE table_schema = 'main'"))
-           (data-plist (plist-get results :data))
-           (types-plist (plist-get results :types))
-           (keys (cl-loop for (k v) on data-plist by 'cddr collect k))
-           (columns (mapcar (lambda (k) (substring (symbol-name k) 1)) keys))
-           (data (cl-loop for (k v) on data-plist by 'cddr collect v))
-           (types (cl-loop for (k v) on types-plist by 'cddr collect v))
-           (num-rows (if data (length (car data)) 0))
-           (rows (cl-loop for r from 0 to (1- num-rows)
-                          collect (cl-loop for col-vec in data
-                                           for type in types
-                                           collect (duckdb--format-value (aref col-vec r) type)))))
-      (duckdb--render-results columns rows))))
+  (condition-case err
+      (let ((conn (or conn-ptr duckdb-current-connection)))
+        (unless conn
+          (error "No active DuckDB connection"))
+        (let* ((results (duckdb-select-columns conn "SELECT table_name, table_schema, table_type FROM information_schema.tables WHERE table_schema = 'main'"))
+               (data-plist (plist-get results :data))
+               (types-plist (plist-get results :types))
+               (keys (cl-loop for (k v) on data-plist by 'cddr collect k))
+               (columns (mapcar (lambda (k) (substring (symbol-name k) 1)) keys))
+               (data (cl-loop for (k v) on data-plist by 'cddr collect v))
+               (types (cl-loop for (k v) on types-plist by 'cddr collect v))
+               (num-rows (if data (length (car data)) 0))
+               (rows (cl-loop for r from 0 to (1- num-rows)
+                              collect (cl-loop for col-vec in data
+                                               for type in types
+                                               collect (duckdb--format-value (aref col-vec r) type)))))
+          (duckdb--render-results columns rows)))
+    (duckdb-error
+     (error "%s" (cadr err)))))
 
 (defun duckdb-mode-open-file (path)
   "Open DuckDB database at PATH and browse its tables."
   (interactive (list (read-string "DuckDB Path: " ":memory:" 'duckdb-path-history ":memory:")))
-  (let* ((db (duckdb-open path))
-         (conn (duckdb-connect db))
-         (buf (get-buffer-create (format "*DuckDB: %s*" path))))
-    (with-current-buffer buf
-      (duckdb-browse-mode)
-      (setq-local duckdb-current-connection conn)
-      (setq-local duckdb--db-ptr db)
-      (setq-local duckdb--db-path path)
-      (duckdb-browse-refresh))
-    (switch-to-buffer buf)))
+  (condition-case err
+      (let* ((db (duckdb-open path))
+             (conn (duckdb-connect db))
+             (buf (get-buffer-create (format "*DuckDB: %s*" path))))
+        (with-current-buffer buf
+          (duckdb-browse-mode)
+          (setq-local duckdb-current-connection conn)
+          (setq-local duckdb--db-ptr db)
+          (setq-local duckdb--db-path path)
+          (duckdb-browse-refresh))
+        (switch-to-buffer buf))
+    (duckdb-error
+     (error "%s" (cadr err)))))
 
 (defmacro with-duckdb (var path &rest body)
   "Open DuckDB at PATH, bind connection to VAR, and execute BODY."
@@ -439,10 +457,13 @@ Optional PARAMS are bound to the query."
   "Execute SQL on DB-OR-PATH and display results.
 DB-OR-PATH can be a connection pointer or a string path."
   (interactive (list (duckdb--get-db-or-path) (read-string "SQL: ")))
-  (if (stringp db-or-path)
-      (with-duckdb conn db-or-path
-        (duckdb--query-and-display-internal conn sql params))
-    (duckdb--query-and-display-internal db-or-path sql params)))
+  (condition-case err
+      (if (stringp db-or-path)
+          (with-duckdb conn db-or-path
+            (duckdb--query-and-display-internal conn sql params))
+        (duckdb--query-and-display-internal db-or-path sql params))
+    (duckdb-error
+     (error "%s" (cadr err)))))
 
 ;; Data Ingestor
 (defun duckdb-insert-buffer (db-or-path table-name &optional buffer)
@@ -460,51 +481,54 @@ as the table name without prompting."
        (list ":memory:"
              (file-name-sans-extension (file-name-nondirectory (or (buffer-file-name) (buffer-name)))))
      (list (duckdb--get-db-or-path) (read-string "Table name: "))))
-  (let* ((buf (or buffer (current-buffer)))
-         (file (buffer-file-name buf))
-         (db-ptr nil)
-         (conn-ptr nil)
-         (is-new-conn nil))
-    (if (stringp db-or-path)
-        (setq db-ptr (duckdb-open db-or-path)
-              conn-ptr (duckdb-connect db-ptr)
-              is-new-conn t)
-      (setq conn-ptr db-or-path))
-    (unwind-protect
-        (let ((exists (member table-name (duckdb-get-tables conn-ptr))))
-          (if file
-              (if exists
-                  (duckdb-execute conn-ptr (format "COPY %s FROM '%s' (AUTO_DETECT TRUE)" table-name file))
-                (duckdb-execute conn-ptr (format "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s')" table-name file)))
-            ;; If not a file, write to a temp file
-            (let ((temp-file (make-temp-file "duckdb-insert-")))
-              (with-current-buffer buf
-                (write-region (point-min) (point-max) temp-file))
-              (unwind-protect
+  (condition-case err
+      (let* ((buf (or buffer (current-buffer)))
+             (file (buffer-file-name buf))
+             (db-ptr nil)
+             (conn-ptr nil)
+             (is-new-conn nil))
+        (if (stringp db-or-path)
+            (setq db-ptr (duckdb-open db-or-path)
+                  conn-ptr (duckdb-connect db-ptr)
+                  is-new-conn t)
+          (setq conn-ptr db-or-path))
+        (unwind-protect
+            (let ((exists (member table-name (duckdb-get-tables conn-ptr))))
+              (if file
                   (if exists
-                      (duckdb-execute conn-ptr (format "COPY %s FROM '%s' (AUTO_DETECT TRUE)" table-name temp-file))
-                    (duckdb-execute conn-ptr (format "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s')" table-name temp-file)))
-                (delete-file temp-file)))))
-      ;; If an error occurred and we just opened the connection, we should probably close it
-      ;; but if we are returning it, we keep it open.
-      )
-    (when (called-interactively-p 'any)
-      ;; If we just opened a new database, or have the path, open a browser
-      (let ((path (if (stringp db-or-path) db-or-path duckdb--db-path))
-            (db (or db-ptr duckdb--db-ptr)))
-        (if db
-            (let* ((new-conn (duckdb-connect db))
-                   (buf (get-buffer-create (format "*DuckDB: %s*" (or path "memory")))))
-              (with-current-buffer buf
-                (duckdb-browse-mode)
-                (setq-local duckdb-current-connection new-conn)
-                (setq-local duckdb--db-ptr db)
-                (setq-local duckdb--db-path path)
-                (duckdb-browse-refresh))
-              (pop-to-buffer buf))
-          (when (stringp path)
-            (duckdb-mode-open-file path)))))
-    conn-ptr))
+                      (duckdb-execute conn-ptr (format "COPY %s FROM '%s' (AUTO_DETECT TRUE)" table-name file))
+                    (duckdb-execute conn-ptr (format "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s')" table-name file)))
+                ;; If not a file, write to a temp file
+                (let ((temp-file (make-temp-file "duckdb-insert-")))
+                  (with-current-buffer buf
+                    (write-region (point-min) (point-max) temp-file))
+                  (unwind-protect
+                      (if exists
+                          (duckdb-execute conn-ptr (format "COPY %s FROM '%s' (AUTO_DETECT TRUE)" table-name temp-file))
+                        (duckdb-execute conn-ptr (format "CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s')" table-name temp-file)))
+                    (delete-file temp-file)))))
+          ;; If an error occurred and we just opened the connection, we should probably close it
+          ;; but if we are returning it, we keep it open.
+          )
+        (when (called-interactively-p 'any)
+          ;; If we just opened a new database, or have the path, open a browser
+          (let ((path (if (stringp db-or-path) db-or-path duckdb--db-path))
+                (db (or db-ptr duckdb--db-ptr)))
+            (if db
+                (let* ((new-conn (duckdb-connect db))
+                       (buf (get-buffer-create (format "*DuckDB: %s*" (or path "memory")))))
+                  (with-current-buffer buf
+                    (duckdb-browse-mode)
+                    (setq-local duckdb-current-connection new-conn)
+                    (setq-local duckdb--db-ptr db)
+                    (setq-local duckdb--db-path path)
+                    (duckdb-browse-refresh))
+                  (pop-to-buffer buf))
+              (when (stringp path)
+                (duckdb-mode-open-file path)))))
+        conn-ptr)
+    (duckdb-error
+     (error "%s" (cadr err)))))
 
 ;;; Interactive Querying
 
@@ -568,22 +592,21 @@ as the table name without prompting."
 (defun duckdb-query-edit-run ()
   "Run the query in the current buffer."
   (interactive)
-  (let* ((raw-sql (buffer-substring-no-properties (point-min) (point-max)))
-         (sql (duckdb--clean-sql raw-sql))
-         (conn duckdb-current-connection)
-         (db-ptr duckdb--db-ptr)
-         (db-path duckdb--db-path)
-         (win-config duckdb--query-window-config)
-         (edit-buf (current-buffer)))
-    ;; Check query type
-    (condition-case err
-	(let ((type (duckdb-query-type conn sql)))
-	  (unless (member type '(SELECT DESCRIBE EXPLAIN PRAGMA))
+  (condition-case err
+      (let* ((raw-sql (buffer-substring-no-properties (point-min) (point-max)))
+             (sql (duckdb--clean-sql raw-sql))
+             (conn duckdb-current-connection)
+             (db-ptr duckdb--db-ptr)
+             (db-path duckdb--db-path)
+             (win-config duckdb--query-window-config)
+             (edit-buf (current-buffer)))
+        ;; Check query type
+        (let ((type (duckdb-query-type conn sql)))
+          (unless (member type '(SELECT DESCRIBE EXPLAIN PRAGMA))
             (error "Only SELECT, DESCRIBE, EXPLAIN and PRAGMA statements are allowed (got %s)" type)))
-      (duckdb-error
-       (error "%s" (car (cdr err)))
-       ))
-    (duckdb--query-execute conn sql 0 win-config edit-buf db-ptr db-path)))
+        (duckdb--query-execute conn sql 0 win-config edit-buf db-ptr db-path))
+    (duckdb-error
+     (error "%s" (cadr err)))))
 
 (defun duckdb--query-execute (conn sql offset win-config edit-buf db-ptr db-path)
   "Execute SQL and display results."
@@ -682,14 +705,17 @@ as the table name without prompting."
 (defun duckdb-query-results-fetch-more ()
   "Fetch more rows for the current query."
   (interactive)
-  (let ((sql duckdb--query-sql)
-        (offset (+ duckdb--query-offset duckdb-query-limit))
-        (conn duckdb-current-connection)
-        (db-ptr duckdb--db-ptr)
-        (db-path duckdb--db-path)
-        (win-config duckdb--query-window-config)
-        (edit-buf duckdb--query-edit-buffer))
-    (duckdb--query-execute conn sql offset win-config edit-buf db-ptr db-path)))
+  (condition-case err
+      (let ((sql duckdb--query-sql)
+            (offset (+ duckdb--query-offset duckdb-query-limit))
+            (conn duckdb-current-connection)
+            (db-ptr duckdb--db-ptr)
+            (db-path duckdb--db-path)
+            (win-config duckdb--query-window-config)
+            (edit-buf duckdb--query-edit-buffer))
+        (duckdb--query-execute conn sql offset win-config edit-buf db-ptr db-path))
+    (duckdb-error
+     (error "%s" (cadr err)))))
 
 (provide 'duckdb)
 ;;; duckdb.el ends here
