@@ -13,7 +13,7 @@ Adhere to the standard layout for Emacs dynamic modules to ensure ease of compil
 
 ```text
 emacs-duckdb/
-├── Makefile              # Build orchestration (compiles C, runs tests)
+├── CMakeLists.txt         # Build orchestration (compiles C, runs tests)
 ├── README.md             # Project overview
 ├── AGENTS.md             # This file (AI instructions)
 ├── duckdb-core.c         # Main C module entry point (emacs_module_init)
@@ -74,11 +74,11 @@ We follow a "Lisp-Driven Testing" approach. Since the C code is an extension of 
   * **Error States:** Pass malformed SQL to C and verify that a Lisp-level `duckdb-error` is signaled.
   * **Asynchronous:** Test that callbacks fire and results match the expected row-major format.
 
-* **Address Sanitizer:** Use address sanitizer to ensure there are no memory bugs. Add a target to the Makefile to build a version of the module with address sanitizer and then run the tests. Always run the asan tests before declaring work completed.
+* **Address Sanitizer:** Use address sanitizer to ensure there are no memory bugs. Enable ASAN in CMake using `-DENABLE_ASAN=ON`, rebuild, and run the tests. Always run the asan tests before declaring work completed.
 
 ## 6. Development Workflow (Agent Protocol)
 
 1. **Reproduction:** Before fixing a bug, add a test case to `tests/duckdb-tests.el` that fails.
-2. **Build:** Use `make` or `make asan-test` to compile and verify.
-3. **Verification:** Ensure `make test` passes and that no memory leaks are reported by ASAN.
+2. **Build:** Use `cmake ..` and `make` (with `-DENABLE_ASAN=ON` if needed) to compile.
+3. **Verification:** Ensure `ctest` passes and that no memory leaks are reported by ASAN.
 4. **Documentation:** Update docstrings in `duckdb.el` and `README.md` if the public API changes.

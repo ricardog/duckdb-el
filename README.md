@@ -18,20 +18,23 @@ An Emacs dynamic module for DuckDB.
 - **Emacs:** Emacs 28 or newer with dynamic module support.
 
 ### Building
-Clone the repository and run `make`:
+Clone the repository and run `cmake`:
 
 ```bash
-git clone https://github.com/youruser/emacs-duckdb
-cd emacs-duckdb
+mkdir build && cd build
+cmake ..
 make
 ```
 
-This will produce `duckdb-core.so`.
+This will produce `duckdb-core.so` in the `build/` directory.
 
 ## Usage
 
 ### Basic Example
 ```elisp
+;; Ensure duckdb-core.so and duckdb.el are in your load-path
+(add-to-list 'load-path "/path/to/emacs-duckdb/build")
+(add-to-list 'load-path "/path/to/emacs-duckdb")
 (require 'duckdb)
 
 ;; Simple query
@@ -79,11 +82,13 @@ Open and browse a DuckDB database file interactively:
 ## Development
 Run tests with:
 ```bash
-make test
+cd build && ctest
 ```
-To run tests with Address Sanitizer (requires `gcc` and `libasan`):
+To run tests with Address Sanitizer:
 ```bash
-make asan-test
+cmake .. -DENABLE_ASAN=ON
+make
+ctest
 ```
 
 ## License

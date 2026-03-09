@@ -2,8 +2,64 @@
 
 (require 'cl-lib)
 
-;; Load the dynamic module
-(require 'duckdb-core)
+;;; Module Loading and Compilation
+
+(defcustom duckdb-module-cmake-args ""
+  "Arguments given to CMake to compile duckdb-core."
+  :type 'string
+  :group 'duckdb)
+
+(defcustom duckdb-always-compile-module nil
+  "If non-nil, compile the module without asking if it is missing."
+  :type 'boolean
+  :group 'duckdb)
+
+(defvar duckdb-install-buffer-name "*Install duckdb-core*"
+  "Name of the buffer used for compiling the duckdb-core module.")
+
+(defun duckdb--cmake-is-available ()
+  "Return t if cmake is available, otherwise signal an error."
+  (unless (executable-find "cmake")
+    (error "DuckDB needs CMake to be compiled. Please install CMake"))
+  t)
+
+;;;###autoload
+(defun duckdb-module-compile ()
+  "Compile the duckdb-core module using CMake."
+  (interactive)
+  (when (duckdb--cmake-is-available)
+    (let* ((duckdb-dir (file-name-directory (locate-library "duckdb.el" t)))
+           (build-dir (expand-file-name "build" duckdb-dir))
+           (make-commands
+            (format "cd %s && mkdir -p build && cd build && cmake %s .. && make"
+                    (shell-quote-argument duckdb-dir)
+                    duckdb-module-cmake-args))
+           (buffer (get-buffer-create duckdb-install-buffer-name)))
+      (with-current-buffer buffer
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (compilation-mode)
+          (display-buffer buffer)
+          (if (zerop (call-process "sh" nil buffer t "-c" make-commands))
+              (message "Compilation of `duckdb-core` module succeeded")
+            (error "Compilation of `duckdb-core` module failed!")))))))
+
+;; Attempt to load the module, compile if missing
+(eval-and-compile
+  (unless (require 'duckdb-core nil t)
+    (let ((duckdb-dir (and (locate-library "duckdb.el" t)
+                           (file-name-directory (locate-library "duckdb.el" t)))))
+      (when duckdb-dir
+        (add-to-list 'load-path (expand-file-name "build" duckdb-dir))))
+
+    (unless (require 'duckdb-core nil t)
+      (if (or duckdb-always-compile-module
+              (y-or-n-p "DuckDB needs `duckdb-core` module to work. Compile it now? "))
+          (progn
+            (duckdb-module-compile)
+            (require 'duckdb-core))
+        (error "DuckDB will not work until `duckdb-core` is compiled!")))))
+
 (require 'sql)
 (require 'font-lock)
 
