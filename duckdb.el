@@ -101,12 +101,13 @@ Optional PARAMS are bound to the query."
 
 (defun duckdb-browse-cleanup ()
   "Cleanup connection when buffer is killed."
-  (when duckdb-current-connection
-    (duckdb-disconnect duckdb-current-connection)
-    (setq duckdb-current-connection nil))
-  (when duckdb--db-ptr
-    (duckdb-close duckdb--db-ptr)
-    (setq duckdb--db-ptr nil)))
+  (unwind-protect
+      (when duckdb-current-connection
+        (ignore-errors (duckdb-disconnect duckdb-current-connection))
+        (setq duckdb-current-connection nil))
+    (when duckdb--db-ptr
+      (ignore-errors (duckdb-close duckdb--db-ptr))
+      (setq duckdb--db-ptr nil))))
 
 (define-derived-mode duckdb-browse-mode special-mode "DuckDB-Browse"
   "Major mode for browsing DuckDB tables."

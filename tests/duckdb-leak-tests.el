@@ -49,4 +49,18 @@
       (should db-closed)
       (should conn-disconnected))))
 
+(ert-deftest duckdb-browse-cleanup-brittle-test ()
+  "Test that duckdb-browse-cleanup closes db even if disconnect fails."
+  (let ((db-closed nil))
+    (let ((buf (get-buffer-create "*DuckDB: cleanup-test*")))
+      (unwind-protect
+          (with-current-buffer buf
+            (setq-local duckdb-current-connection :mock-conn)
+            (setq-local duckdb--db-ptr :mock-db)
+            (cl-letf (((symbol-function 'duckdb-disconnect) (lambda (_) (signal 'error '("Disconnect Failed"))))
+                      ((symbol-function 'duckdb-close) (lambda (db) (when (eq db :mock-db) (setq db-closed t)))))
+              (duckdb-browse-cleanup)
+              (should db-closed)))
+        (kill-buffer buf)))))
+
 (provide 'duckdb-leak-tests)
