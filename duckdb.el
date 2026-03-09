@@ -398,23 +398,32 @@ Optional PARAMS are bound to the query."
   "Completion at point for DuckDB SQL."
   (let* ((bounds (bounds-of-thing-at-point 'symbol))
          (start (or (car bounds) (point)))
-         (end (or (cdr bounds) (point))))
-    (when duckdb-current-connection
+         (end (or (cdr bounds) (point)))
+         (conn duckdb-current-connection)
+         (buf (current-buffer)))
+    (when conn
       (list start end
             (completion-table-dynamic
              (lambda (str)
-               (cond
-                ;; table.column completion
-                ((string-match "\\`\\([^.]+\\)\\.\\(.*\\)" str)
-                 (let ((table (match-string 1 str)))
-                   (mapcar (lambda (col) (concat table "." col))
-                           (duckdb-get-columns duckdb-current-connection table))))
-                ;; table or column completion
-                (t
-                 (let ((tables (duckdb-get-tables duckdb-current-connection)))
-                   (append tables
-                           (cl-loop for table in tables
-                                    append (duckdb-get-columns duckdb-current-connection table))))))))
+               (with-current-buffer buf
+                 (condition-case err
+                     (let ((duckdb-current-connection conn))
+                       (cond
+                        ;; table.column completion
+                        ((string-match "\\`\\([^.]+\\)\\.\\(.*\\)" str)
+                         (let ((table (match-string 1 str)))
+                           (mapcar (lambda (col) (concat table "." col))
+                                   (duckdb-get-columns conn table))))
+                        ;; table or column completion
+                        (t
+                         (let ((tables (duckdb-get-tables conn)))
+                           (append tables
+                                   (cl-loop for table in tables
+                                            append (duckdb-get-columns conn table)))))))
+                   (duckdb-error
+                    (message "DuckDB completion error: %s" (error-message-string err))
+                    nil))))
+             buf)
             :exclusive 'no))))
 
 (define-derived-mode duckdb-sql-mode sql-mode "DuckDB SQL"

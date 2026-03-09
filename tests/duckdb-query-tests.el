@@ -187,4 +187,17 @@
 
       (kill-buffer edit-buf))))
 
+(ert-deftest duckdb-completion-at-point-error-test ()
+  "Test that duckdb-completion-at-point handles duckdb-error gracefully."
+  (with-duckdb conn ":memory:"
+    (with-temp-buffer
+      (duckdb-sql-mode)
+      (setq-local duckdb-current-connection conn)
+      (insert "SEL")
+      (let* ((res (duckdb-completion-at-point))
+             (table-func (nth 2 res)))
+        (cl-letf (((symbol-function 'duckdb-get-tables)
+                   (lambda (_) (signal 'duckdb-error '("Mocked Error")))))
+          (should (null (all-completions "SEL" table-func))))))))
+
 (provide 'duckdb-query-tests)
