@@ -551,6 +551,19 @@ DB-OR-PATH can be a connection pointer or a string path."
     (duckdb-error
      (error "%s" (cadr err)))))
 
+(defun duckdb--file-name-base (path)
+  "Strip compression suffixes defined in `dired-compress-file-suffixes`,
+then strip the remaining file extension."
+  (let ((filename (file-name-nondirectory path)))
+    (require 'dired) ; Ensure the compression alist is loaded
+    ;; 1. Strip compression suffix if it matches any in the dired alist
+    (dolist (item dired-compress-file-suffixes)
+      (let ((suffix-regexp (car item)))
+        (if (string-match (concat suffix-regexp "$") filename)
+            (setq filename (replace-regexp-in-string suffix-regexp "" filename)))))
+    ;; 2. Strip the standard file extension (e.g., .csv or .txt)
+    (file-name-base filename)))
+
 ;; Data Ingestor
 (defun duckdb-insert-buffer (db-or-path table-name &optional buffer)
   "Insert the contents of BUFFER into TABLE-NAME in DuckDB via DB-OR-PATH.
@@ -565,7 +578,7 @@ as the table name without prompting."
   (interactive
    (if current-prefix-arg
        (list ":memory:"
-             (file-name-sans-extension (file-name-nondirectory (or (buffer-file-name) (buffer-name)))))
+             (duckdb--file-name-base (or (buffer-file-name) (buffer-name))))
      (list (duckdb--get-db-or-path) (read-string "Table name: "))))
   (condition-case err
       (let* ((buf (or buffer (current-buffer)))
