@@ -29,18 +29,30 @@ if(APPLE)
     if(DUCKDB_PREFIX)
         set(DUCKDB_INC "${DUCKDB_PREFIX}/include")
         set(DUCKDB_LIB_DIR "${DUCKDB_PREFIX}/lib")
+        find_library(DUCKDB_LIBRARY NAMES duckdb PATHS "${DUCKDB_LIB_DIR}" NO_DEFAULT_PATH)
     endif()
 endif()
 
 # Fallback: Search standard system paths (/usr/local, /usr)
-if(NOT DUCKDB_INC OR NOT DUCKDB_LIB_DIR)
+if(NOT DUCKDB_INC OR NOT DUCKDB_LIBRARY)
     find_path(DUCKDB_INC_DIR NAMES duckdb.h)
-    find_library(DUCKDB_LIBRARY NAMES duckdb)
+
+    if(NOT APPLE)
+        # On Linux, try to find the static library first to avoid runtime dependency issues (libstdc++, etc.)
+        find_library(DUCKDB_LIBRARY_STATIC NAMES libduckdb.a duckdb_static)
+        if(DUCKDB_LIBRARY_STATIC)
+            set(DUCKDB_LIBRARY "${DUCKDB_LIBRARY_STATIC}")
+        else()
+            find_library(DUCKDB_LIBRARY NAMES duckdb)
+        endif()
+    else()
+        find_library(DUCKDB_LIBRARY NAMES duckdb)
+    endif()
 
     if(DUCKDB_INC_DIR AND DUCKDB_LIBRARY)
-        set(DUCKDB_INC ${DUCKDB_INC_DIR})
+        set(DUCKDB_INC "${DUCKDB_INC_DIR}")
         # Get the directory containing the library for the RPATH/Linker
-        get_filename_component(DUCKDB_LIB_DIR ${DUCKDB_LIBRARY} DIRECTORY)
+        get_filename_component(DUCKDB_LIB_DIR "${DUCKDB_LIBRARY}" DIRECTORY)
     else()
         message(FATAL_ERROR "DuckDB headers or library not found. Install duckdb first.")
     endif()
@@ -64,12 +76,35 @@ set_source_files_properties(base64_simd.c PROPERTIES COMPILE_FLAGS "${SIMD_FLAGS
 configure_file(iris.csv iris.csv COPYONLY)
 
 # Linker flags
-target_link_directories(duckdb-core PRIVATE ${DUCKDB_LIB_DIR})
-target_link_libraries(duckdb-core PRIVATE duckdb Threads::Threads)
-if(NOT APPLE)
-    target_link_libraries(duckdb-core PRIVATE stdc++)
-endif()
+target_link_directories(duckdb-core PRIVATE "${DUCKDB_LIB_DIR}")
 
+if(NOT APPLE)
+    # On Linux, linking statically with libduckdb.a can lead to missing internal 
+    # C++ symbols (like fmt) because they are often marked as unique/weak and 
+    # not included in the static archive in a way that allows them to be 
+    # exported by a shared module.
+    # We prefer dynamic linking but ensure RPATH is set up correctly.
+
+    # Check if we are linking against a static library (if user forced it)
+    get_filename_component(DUCKDB_LIB_EXT "${DUCKDB_LIBRARY}" EXT)
+    if(DUCKDB_LIB_EXT STREQUAL ".a")
+        message(STATUS "Linking DuckDB statically")
+        target_link_libraries(duckdb-core PRIVATE 
+            -Wl,--whole-archive "${DUCKDB_LIBRARY}" -Wl,--no-whole-archive
+            Threads::Threads m dl rt)
+        target_link_options(duckdb-core PRIVATE "-static-libstdc++" "-static-libgcc")
+    else()
+        message(STATUS "Linking DuckDB dynamically")
+        target_link_libraries(duckdb-core PRIVATE "${DUCKDB_LIBRARY}" Threads::Threads)
+        # Ensure we look in the directory where the library was found at runtime
+        set_target_properties(duckdb-core PROPERTIES INSTALL_RPATH "$ORIGIN;${DUCKDB_LIB_DIR}")
+    endif()
+
+    # Force C++ linker to ensure libstdc++ and other C++ requirements are handled correctly
+    set_target_properties(duckdb-core PROPERTIES LINKER_LANGUAGE CXX)
+else()    # On MacOS, we use the library found (should be .dylib or .a)
+    target_link_libraries(duckdb-core PRIVATE "${DUCKDB_LIBRARY}" Threads::Threads)
+endif()
 # RPATH configuration
 if(APPLE)
     set_target_properties(duckdb-core PROPERTIES INSTALL_RPATH "@loader_path;${DUCKDB_LIB_DIR}")
