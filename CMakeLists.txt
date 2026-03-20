@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(duckdb-emacs C)
+project(duckdb-emacs C CXX)
 
 set(CMAKE_C_STANDARD 11)
 
@@ -26,14 +26,24 @@ if(APPLE)
         OUTPUT_VARIABLE DUCKDB_PREFIX
         OUTPUT_STRIP_TRAILING_WHITESPACE
         ERROR_QUIET)
+    if(DUCKDB_PREFIX)
+        set(DUCKDB_INC "${DUCKDB_PREFIX}/include")
+        set(DUCKDB_LIB_DIR "${DUCKDB_PREFIX}/lib")
+    endif()
 endif()
 
-if(DUCKDB_PREFIX)
-    set(DUCKDB_INC "${DUCKDB_PREFIX}/include")
-    set(DUCKDB_LIB_DIR "${DUCKDB_PREFIX}/lib")
-else()
-    set(DUCKDB_INC "${CMAKE_CURRENT_SOURCE_DIR}/lib")
-    set(DUCKDB_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib")
+# Fallback: Search standard system paths (/usr/local, /usr)
+if(NOT DUCKDB_INC OR NOT DUCKDB_LIB_DIR)
+    find_path(DUCKDB_INC_DIR NAMES duckdb.h)
+    find_library(DUCKDB_LIBRARY NAMES duckdb)
+
+    if(DUCKDB_INC_DIR AND DUCKDB_LIBRARY)
+        set(DUCKDB_INC ${DUCKDB_INC_DIR})
+        # Get the directory containing the library for the RPATH/Linker
+        get_filename_component(DUCKDB_LIB_DIR ${DUCKDB_LIBRARY} DIRECTORY)
+    else()
+        message(FATAL_ERROR "DuckDB headers or library not found. Install duckdb first.")
+    endif()
 endif()
 
 # Include directories
@@ -56,15 +66,17 @@ configure_file(iris.csv iris.csv COPYONLY)
 # Linker flags
 target_link_directories(duckdb-core PRIVATE ${DUCKDB_LIB_DIR})
 target_link_libraries(duckdb-core PRIVATE duckdb Threads::Threads)
+if(NOT APPLE)
+    target_link_libraries(duckdb-core PRIVATE stdc++)
+endif()
 
 # RPATH configuration
 if(APPLE)
-    set_target_properties(duckdb-core PROPERTIES INSTALL_RPATH "@loader_path/lib")
-    set_target_properties(duckdb-core PROPERTIES BUILD_WITH_INSTALL_RPATH TRUE)
+    set_target_properties(duckdb-core PROPERTIES INSTALL_RPATH "@loader_path;${DUCKDB_LIB_DIR}")
 else()
-    set_target_properties(duckdb-core PROPERTIES INSTALL_RPATH "$ORIGIN/lib")
-    set_target_properties(duckdb-core PROPERTIES BUILD_WITH_INSTALL_RPATH TRUE)
+    set_target_properties(duckdb-core PROPERTIES INSTALL_RPATH "$ORIGIN;${DUCKDB_LIB_DIR}")
 endif()
+set_target_properties(duckdb-core PROPERTIES BUILD_WITH_INSTALL_RPATH TRUE)
 
 # ASAN support
 option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
@@ -87,8 +99,7 @@ if(EMACS_EXECUTABLE)
 
     foreach(TEST_FILE ${TEST_FILES})
         add_test(NAME ${TEST_FILE}
-            COMMAND ${CMAKE_COMMAND} -E env "LD_LIBRARY_PATH=${DUCKDB_LIB_DIR}:$ENV{LD_LIBRARY_PATH}"
-            "${EMACS_EXECUTABLE}" -batch
+            COMMAND "${EMACS_EXECUTABLE}" -batch
             -L "${CMAKE_CURRENT_BINARY_DIR}"
             -L "${CMAKE_CURRENT_SOURCE_DIR}"
             -l "${CMAKE_CURRENT_SOURCE_DIR}/tests/test-helper.el"
