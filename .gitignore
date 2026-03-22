@@ -4,3 +4,4 @@ build/
 lib/libduckdb.so
 lib/libduckdb_static.a
 lib/libduckdb.zip
+.DS_Store
