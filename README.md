@@ -157,6 +157,63 @@ INTO
 
 ---
 
+## Org-babel Support
+`emacs-duckdb` includes high-performance Org-babel support via `ob-duckdb.el`.
+
+### Setup
+```elisp
+(require 'ob-duckdb)
+```
+
+### Basic Example
+Execute SQL directly in your Org files:
+```org
+#+begin_src duckdb :db ":memory:" :colnames yes
+SELECT 1 as id, 'Alice' as name
+UNION ALL
+SELECT 2, 'Bob'
+#+end_src
+
+#+RESULTS:
+| id | name  |
+|----+-------|
+|  1 | Alice |
+|  2 | Bob   |
+```
+
+### Sessions
+Use `:session` to persist tables and views across different source blocks:
+```org
+#+begin_src duckdb :session my-db
+CREATE TABLE users (id INTEGER, name TEXT);
+INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob');
+#+end_src
+
+#+begin_src duckdb :session my-db
+SELECT * FROM users WHERE id = 1;
+#+end_src
+```
+
+### Variable Binding
+Bind Org-mode tables or simple values to DuckDB views:
+```org
+#+NAME: raw_data
+| id | score |
+|----+-------|
+|  1 |    85 |
+|  2 |    92 |
+
+#+begin_src duckdb :var data=raw_data :var threshold=90
+SELECT * FROM data WHERE score >= threshold;
+#+end_src
+
+#+RESULTS:
+| id | score |
+|----+-------|
+|  2 |    92 |
+```
+Variable binding for tables uses DuckDB's high-speed `read_csv_auto` under the hood for maximum performance.
+
 ## Development
 Run tests with:
 ```bash

@@ -130,6 +130,8 @@ if(EMACS_EXECUTABLE)
         duckdb-query-tests.el
         duckdb-interactive-error-tests.el
         duckdb-leak-tests.el
+        ob-duckdb-tests.el
+        duckdb-benchmark.el
     )
 
     foreach(TEST_FILE ${TEST_FILES})
