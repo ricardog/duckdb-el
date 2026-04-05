@@ -27,7 +27,9 @@ Duckdb-el can be installed using various Emacs package managers:
 
 ```elisp
 (use-package duckdb
-  :straight (duckdb :type git :host github :repo "ricardog/duckdb-el")
+  :straight (duckdb :type git :host github :repo "ricardog/duckdb-el"
+		    :files (:defaults "*.el" "*.c" "*.h" "iris.csv"
+				      "CMakeLists.txt"))
 )
 ```
 
